@@ -53,25 +53,35 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # 👉 Forward messages
 async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_message:
+        return
+
     mappings = load_mappings()
 
-    chat_id = str(update.message.chat.username)
+    chat = update.effective_chat
+
+    if chat.username:
+        chat_id = "@" + chat.username
+    else:
+        chat_id = str(chat.id)
 
     if chat_id in mappings:
         dest = mappings[chat_id]
 
         await context.bot.forward_message(
             chat_id=dest,
-            from_chat_id=update.message.chat_id,
-            message_id=update.message.message_id
+            from_chat_id=chat.id,
+            message_id=update.effective_message.message_id
         )
-
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # ✅ Commands
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("list", list_cmd))
+
+    # ✅ Forward handler (MOST IMPORTANT)
     app.add_handler(MessageHandler(filters.ALL, forward))
 
     print("🚀 Bot running...")
