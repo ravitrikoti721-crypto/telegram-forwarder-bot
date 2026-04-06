@@ -57,7 +57,6 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     mappings = load_mappings()
-
     chat = update.effective_chat
 
     if chat.username:
@@ -65,14 +64,14 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         chat_id = str(chat.id)
 
-    if chat_id in mappings:    
-        dest = mappings[chat_id]
+    if chat_id in mappings:
+            dest = mappings[chat_id]
 
-            await context.bot.copy_message(
+             await context.bot.copy_message(
             chat_id=dest,
             from_chat_id=chat.id,
             message_id=update.effective_message.message_id
-        )
+             )
         
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
