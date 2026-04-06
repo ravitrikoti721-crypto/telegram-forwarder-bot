@@ -28,17 +28,17 @@ def save_mappings(data):
 # 👉 Add mapping
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        source = context.args[0]
-        dest = context.args[1]
+        source = "@" + context.args[0].lstrip("@")
+dest = "@" + context.args[1].lstrip("@")
 
         mappings = load_mappings()
         mappings[source] = dest
         save_mappings(mappings)
 
         await update.message.reply_text(f"✅ Added: {source} → {dest}")
-    except:
-        await update.message.reply_text("❌ Usage: /add source_channel destination_channel")
 
+    except:
+        await update.message.reply_text("❌ Usage: /add @source @destination")
 
 # 👉 List mappings
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -63,25 +63,22 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.username:
         chat_id = "@" + chat.username
     else:
-        chat_id = str(chat.id)
+    chat_id = str(chat.id)
 
     if chat_id in mappings:
         dest = mappings[chat_id]
 
-        await context.bot.forward_message(
-            chat_id=dest,
-            from_chat_id=chat.id,
-            message_id=update.effective_message.message_id
-        )
+        await context.bot.copy_message(
+    chat_id=dest,
+    from_chat_id=chat.id,
+    message_id=update.effective_message.message_id
+)
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # ✅ Commands
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("list", list_cmd))
-
-    # ✅ Forward handler (MOST IMPORTANT)
     app.add_handler(MessageHandler(filters.ALL, forward))
 
     print("🚀 Bot running...")
