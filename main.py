@@ -5,7 +5,12 @@ from threading import Thread
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = os.getenv(BOT_TOKEN)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN not found. Check Render Environment Variables")
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 MAPPINGS_FILE = "channels.json"
 
 # Flask app for Render port
@@ -94,7 +99,6 @@ def run_bot():
 
     print("🚀 Bot running...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     # Run flask in thread (for Render port)
