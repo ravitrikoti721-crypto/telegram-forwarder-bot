@@ -99,10 +99,3 @@ def run_bot():
 
     print("🚀 Bot running...")
     app.run_polling()
-
-if __name__ == "__main__":
-    # Run flask in thread (for Render port)
-    Thread(target=run_flask).start()
-
-    # Run bot
-    run_bot()
