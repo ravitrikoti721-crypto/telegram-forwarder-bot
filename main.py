@@ -10,7 +10,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN not found. Check Render Environment Variables")
 
-app = ApplicationBuilder().token(BOT_TOKEN).build()
 MAPPINGS_FILE = "channels.json"
 
 # Flask app for Render port
@@ -99,3 +98,9 @@ def run_bot():
 
     print("🚀 Bot running...")
     app.run_polling()
+
+
+# MAIN
+if __name__ == "__main__":
+    Thread(target=run_flask).start()
+    run_bot()
