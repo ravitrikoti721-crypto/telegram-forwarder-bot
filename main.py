@@ -61,8 +61,8 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
 
     if chat.username:
-        chat_id = "@" + chat.username
-    else:
+    chat_id = "@" + chat.username
+else:
     chat_id = str(chat.id)
 
     if chat_id in mappings:
