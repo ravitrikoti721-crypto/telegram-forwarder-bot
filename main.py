@@ -1,10 +1,23 @@
 import json
 import os
+from flask import Flask
+from threading import Thread
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MAPPINGS_FILE = "channels.json"
+
+# Flask app for Render port
+app_flask = Flask(__name__)
+
+@app_flask.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app_flask.run(host="0.0.0.0", port=port)
 
 
 # Load mappings
@@ -21,7 +34,7 @@ def save_mappings(data):
         json.dump(data, f, indent=2)
 
 
-# ➕ Add mapping
+# Add mapping
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         source = "@" + context.args[0].lstrip("@")
@@ -36,7 +49,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: /add @source @destination")
 
 
-# 📋 List mappings
+# List mappings
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mappings = load_mappings()
 
@@ -48,7 +61,7 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
-# 🔁 Forward messages
+# Forward messages
 async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_message:
         return
@@ -56,13 +69,11 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mappings = load_mappings()
     chat = update.effective_chat
 
-    # Identify source
     if chat.username:
         chat_id = "@" + chat.username
     else:
         chat_id = str(chat.id)
 
-    # Forward if mapped
     if chat_id in mappings:
         dest = mappings[chat_id]
 
@@ -73,8 +84,8 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# 🚀 Run bot
-if __name__ == "__main__":
+# Run bot
+def run_bot():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("add", add))
@@ -83,3 +94,11 @@ if __name__ == "__main__":
 
     print("🚀 Bot running...")
     app.run_polling()
+
+
+if __name__ == "__main__":
+    # Run flask in thread (for Render port)
+    Thread(target=run_flask).start()
+
+    # Run bot
+    run_bot()
