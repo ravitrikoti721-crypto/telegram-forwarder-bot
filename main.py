@@ -1,31 +1,27 @@
 import json
-import logging
 import os
-
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-logging.basicConfig(level=logging.INFO)
-
-BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 MAPPINGS_FILE = "channels.json"
 
 
+# Load mappings
 def load_mappings():
-    try:
-        with open(MAPPINGS_FILE, "r") as f:
-            return json.load(f)
-    except:
+    if not os.path.exists(MAPPINGS_FILE):
         return {}
+    with open(MAPPINGS_FILE, "r") as f:
+        return json.load(f)
 
 
+# Save mappings
 def save_mappings(data):
     with open(MAPPINGS_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
 
-# 👉 Add mapping
+# ➕ Add mapping
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         source = "@" + context.args[0].lstrip("@")
@@ -36,13 +32,14 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_mappings(mappings)
 
         await update.message.reply_text(f"✅ Added: {source} → {dest}")
-
     except:
         await update.message.reply_text("❌ Usage: /add @source @destination")
-        
-# 👉 List mappings
+
+
+# 📋 List mappings
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mappings = load_mappings()
+
     if not mappings:
         await update.message.reply_text("No mappings found.")
         return
@@ -51,7 +48,7 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
-# 👉 Forward messages
+# 🔁 Forward messages
 async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_message:
         return
@@ -59,20 +56,24 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mappings = load_mappings()
     chat = update.effective_chat
 
+    # Identify source
     if chat.username:
         chat_id = "@" + chat.username
     else:
         chat_id = str(chat.id)
 
+    # Forward if mapped
     if chat_id in mappings:
-            dest = mappings[chat_id]
+        dest = mappings[chat_id]
 
-             await context.bot.copy_message(
+        await context.bot.copy_message(
             chat_id=dest,
             from_chat_id=chat.id,
             message_id=update.effective_message.message_id
-             )
-        
+        )
+
+
+# 🚀 Run bot
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
