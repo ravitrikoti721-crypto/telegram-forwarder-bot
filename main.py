@@ -5,7 +5,7 @@ from threading import Thread
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv(BOT_TOKEN)
 MAPPINGS_FILE = "channels.json"
 
 # Flask app for Render port
