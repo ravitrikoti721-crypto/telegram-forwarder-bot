@@ -29,7 +29,7 @@ def save_mappings(data):
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         source = "@" + context.args[0].lstrip("@")
-dest = "@" + context.args[1].lstrip("@")
+        dest = "@" + context.args[1].lstrip("@")
 
         mappings = load_mappings()
         mappings[source] = dest
@@ -39,7 +39,7 @@ dest = "@" + context.args[1].lstrip("@")
 
     except:
         await update.message.reply_text("❌ Usage: /add @source @destination")
-
+        
 # 👉 List mappings
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mappings = load_mappings()
