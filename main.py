@@ -3,25 +3,19 @@ import logging
 import asyncio
 from pyrogram import Client, filters
 
-# Setup logging to see the "Active" message in Render
 logging.basicConfig(level=logging.INFO)
 
-# These are pulled from your Render Environment Variables
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 SESSION_STRING = os.getenv("SESSION_STRING")
 
-# This creates your "Bridge" between the channels
-# It looks for the NEW keys you added to Render
 MAPPINGS = {
     os.getenv("SOURCE_PUBLIC_ID"): os.getenv("TARGET_PUBLIC_ID"),
     os.getenv("SOURCE_PRIVATE_ID"): os.getenv("TARGET_PRIVATE_ID")
 }
 
-# Convert IDs to numbers so the UserBot understands them
 CHANNELS_MAP = {int(k): int(v) for k, v in MAPPINGS.items() if k and v}
 
-# Initialize your UserBot (acts as your account)
 app = Client(
     "my_userbot",
     api_id=int(API_ID) if API_ID else None,
@@ -34,15 +28,25 @@ async def mirror_messages(client, message):
     target_id = CHANNELS_MAP.get(message.chat.id)
     if target_id:
         try:
-            # .copy() is the magic command for restricted content
             await message.copy(target_id)
-            logging.info(f"✅ Message mirrored from {message.chat.id} to {target_id}")
+            logging.info(f"✅ Mirrored to {target_id}")
         except Exception as e:
-            logging.error(f"❌ Mirroring error: {e}")
+            logging.error(f"❌ Error: {e}")
+
+async def start_bot():
+    logging.info("Checking connection...")
+    await app.start()
+    
+    # --- THIS PART FIXES THE 'PEER ID INVALID' ERROR ---
+    logging.info("Syncing channels to prevent 'Peer ID Invalid'...")
+    async for dialog in app.get_dialogs():
+        # This forces the bot to 'meet' every channel you are in
+        pass 
+    # ---------------------------------------------------
+    
+    logging.info(f"🚀 UserBot is synced and active! Monitoring {len(CHANNELS_MAP)} pairs.")
+    await asyncio.Event().wait() # Keep it running
 
 if __name__ == "__main__":
-    if not SESSION_STRING:
-        logging.error("❌ ERROR: SESSION_STRING is missing in Render Environment!")
-    else:
-        logging.info(f"🚀 UserBot is active! Monitoring {len(CHANNELS_MAP)} pairs.")
-        app.run()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start_bot())
