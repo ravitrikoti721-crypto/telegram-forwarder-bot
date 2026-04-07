@@ -89,15 +89,20 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # Run bot
+import asyncio
+
 def run_bot():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    async def main():
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("add", add))
-    app.add_handler(CommandHandler("list", list_cmd))
-    app.add_handler(MessageHandler(filters.ALL, forward))
+        app.add_handler(CommandHandler("add", add))
+        app.add_handler(CommandHandler("list", list_cmd))
+        app.add_handler(MessageHandler(filters.ALL, forward))
 
-    print("🚀 Bot running...")
-    app.run_polling()
+        print("🚀 Bot running...")
+        await app.run_polling()
+
+    asyncio.run(main())
 
 
 # MAIN
