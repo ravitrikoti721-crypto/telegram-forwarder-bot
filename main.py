@@ -2,57 +2,57 @@ import asyncio
 import os
 import logging
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters, CommandHandler
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
+# Setup logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+# This will read your mapping from Render's settings
+SOURCE_ID = os.getenv("SOURCE_CHANNEL_ID")
+TARGET_ID = os.getenv("TARGET_CHANNEL_ID")
 
-# This will store your mappings in the bot's memory
-# Format: { "Source_ID": "Target_ID" }
-mappings = {}
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Forwarder Bot Active! Use /map [SourceID] [TargetID] to link channels.")
-
-async def map_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Command usage: /map -100111 -100222
-    if len(context.args) < 2:
-        await update.message.reply_text("Usage: /map <Source_Channel_ID> <Target_Channel_ID>")
-        return
-    
-    source = context.args[0]
-    target = int(context.args[1])
-    mappings[source] = target
-    await update.message.reply_text(f"✅ Linked! Messages from {source} will now copy to {target}")
-
-async def handle_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_copy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     source = update.channel_post or update.message
-    if not source:
+    if not source or not SOURCE_ID or not TARGET_ID:
         return
 
-    source_id = str(source.chat_id)
-
-    if source_id in mappings:
-        target_id = mappings[source_id]
+    # Check if the message is coming from the SEBI RA channel you specified
+    if str(source.chat_id) == str(SOURCE_ID):
         try:
+            # Clean copy: no "forwarded from" tag
             await context.bot.copy_message(
-                chat_id=target_id,
+                chat_id=int(TARGET_ID),
                 from_chat_id=source.chat_id,
                 message_id=source.message_id
             )
-            logging.info(f"Copied from {source_id} to {target_id}")
+            logging.info(f"✅ Trade copied to your channel!")
         except Exception as e:
-            logging.error(f"Error: {e}")
+            logging.error(f"❌ Copy failed: {e}")
 
 async def main():
+    if not BOT_TOKEN or not SOURCE_ID or not TARGET_ID:
+        logging.error("❌ SETUP INCOMPLETE: Ensure BOT_TOKEN, SOURCE_CHANNEL_ID, and TARGET_CHANNEL_ID are set in Render.")
+        return
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(MessageHandler(filters.ALL, handle_copy))
     
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("map", map_channels))
-    app.add_handler(MessageHandler(filters.ALL, handle_posts))
+    logging.info(f"🚀 Bot starting. Monitoring: {SOURCE_ID} -> Sending to: {TARGET_ID}")
     
-    await app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Use a simpler polling method that works better with Render's lifecycle
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Keep the bot running
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    except Exception as e:
+        logging.error(f"Fatal error: {e}")
