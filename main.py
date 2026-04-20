@@ -22,38 +22,43 @@ def clean_message(text):
     if not text:
         return ""
 
-    # 1. Skip messages that are purely promotional (Screenshot 4 logic)
-    promo_keywords = ["Renew it Today", "PRIME plan", "Membership Is Expiring", "BE PART OF PRIME"]
+    # 1. Skip messages that are purely promotional or YouTube alerts
+    promo_keywords = [
+        "Renew it Today", "PRIME plan", "Membership Is Expiring", 
+        "Weekend Market Analysis", "Watch here", "new video", "LIVE!",
+        "Finance with Sunil", "Sunit", "Sunil"
+    ]
     if any(key.lower() in text.lower() for key in promo_keywords):
-        logging.info("🚫 Skipping purely promotional message.")
+        logging.info("🚫 Skipping promotional/YouTube alert.")
         return None
 
-    # 2. Hatao Twitter aur X links (Screenshot 2 & 3)
+    # 2. Hatao YouTube aur baaki social links
+    text = re.sub(r'https?:\/\/(www\.)?(youtube\.com|youtu\.be|yt\.openinapp\.co)\/\S+', '', text)
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com)\/\S+', '', text)
     
     # 3. Hatao Payment links (Cosmofeed, Revlu)
     text = re.sub(r'https?:\/\/(cosmofeed\.com|revlu\.in|revlu\.link)\/\S+', '', text)
     
-    # 4. Hatao generic Telegram links aur usernames (Ping @SG005 logic)
+    # 4. Hatao generic Telegram links aur usernames
     text = re.sub(r'https?:\/\/t\.me\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
 
-    # 5. Specific Bad Words Removal (Kapil Verma, Stock Gainers, etc.)
+    # 5. Specific Bad Words Removal (Including new ones)
     bad_words = [
         "Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision",
-        "Twitter", "X (formerly Twitter)", "Prime Membership", 
-        "PRIME plan", "Ping", "Renew it Today", "Join our SEBI Registered",
+        "Finance with Sunil", "Sunil", "Sunit", "Weekend Market Analysis",
+        "Watch here", "new video", "PRIME plan", "Ping", "Join our SEBI Registered",
         "guided advisory", "Advanced Equity Trading Group"
     ]
     
     for word in bad_words:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
 
-    # 6. Final Cleanup (Extra symbols aur empty lines)
+    # 6. Final Cleanup
     text = re.sub(r'\n\s*\n', '\n\n', text).strip()
     
-    # Agar cleaning ke baad sirf emojis ya junk bacha hai, toh None bhejenge
-    if len(text) < 3 and not any(char.isalnum() for char in text):
+    # Check if anything meaningful is left
+    if not text or (len(text) < 5 and not any(char.isalnum() for char in text)):
         return None
         
     return text
@@ -65,12 +70,12 @@ async def handler(event):
         original_text = event.raw_text
         cleaned_text = clean_message(original_text)
         
-        # Agar clean_message ne None diya, toh matlab message skip karna hai
         if cleaned_text is None:
-            logging.info("⏭️ Message filtered out completely.")
+            logging.info("⏭️ Message skipped (Promotion/YouTube).")
             return
 
         if event.media:
+            # Video thumbnails ya promotional posters ko skip karne ke liye check
             await client.send_message(TARGET, cleaned_text, file=event.media)
         else:
             await client.send_message(TARGET, cleaned_text)
@@ -81,7 +86,7 @@ async def handler(event):
 
 async def main():
     await client.start()
-    logging.info("--- 24/7 ELITE CLEANER ONLINE ---")
+    logging.info("--- 24/7 SURGICAL CLEANER ONLINE ---")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
