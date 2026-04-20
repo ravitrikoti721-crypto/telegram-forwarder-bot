@@ -1,6 +1,4 @@
-import os
-import logging
-import asyncio
+import os, logging, asyncio
 from pyrogram import Client, filters
 
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +18,8 @@ app = Client(
     "my_userbot",
     api_id=int(API_ID) if API_ID else None,
     api_hash=API_HASH,
-    session_string=SESSION_STRING
+    session_string=SESSION_STRING,
+    in_memory=True # Purana kachra saaf rakhne ke liye
 )
 
 @app.on_message(filters.chat(list(CHANNELS_MAP.keys())))
@@ -28,24 +27,36 @@ async def mirror_messages(client, message):
     target_id = CHANNELS_MAP.get(message.chat.id)
     if target_id:
         try:
+            # Restricted content bypass: Try copy first
             await message.copy(target_id)
             logging.info(f"✅ Mirrored to {target_id}")
         except Exception as e:
-            logging.error(f"❌ Error: {e}")
+            logging.warning(f"⚠️ Copy failed (Restricted?), trying Text/Media send: {e}")
+            try:
+                # Agar copy fail ho toh manual message bhejo
+                if message.text:
+                    await client.send_message(target_id, message.text)
+                elif message.caption:
+                    await message.copy(target_id) # Media restricted bypass try
+                logging.info(f"✅ Mirrored via fallback to {target_id}")
+            except Exception as e2:
+                logging.error(f"❌ Final Error: {e2}")
 
 async def start_bot():
     logging.info("Checking connection...")
     await app.start()
     
-    # --- THIS PART FIXES THE 'PEER ID INVALID' ERROR ---
-    logging.info("Syncing channels to prevent 'Peer ID Invalid'...")
-    async for dialog in app.get_dialogs():
-        # This forces the bot to 'meet' every channel you are in
-        pass 
-    # ---------------------------------------------------
+    logging.info("Syncing channels and checking membership...")
+    # Har channel ko check karega ki aap uske member ho ya nahi
+    for source_id in CHANNELS_MAP.keys():
+        try:
+            chat = await app.get_chat(source_id)
+            logging.info(f"✅ Found Source: {chat.title}")
+        except Exception as e:
+            logging.error(f"❌ Source ID {source_id} Not Found! Make sure your account is a member. Error: {e}")
     
-    logging.info(f"🚀 UserBot is synced and active! Monitoring {len(CHANNELS_MAP)} pairs.")
-    await asyncio.Event().wait() # Keep it running
+    logging.info(f"🚀 UserBot is active! Monitoring {len(CHANNELS_MAP)} pairs.")
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
