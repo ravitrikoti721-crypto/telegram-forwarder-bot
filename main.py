@@ -1,72 +1,39 @@
-import os, logging, asyncio
-from pyrogram import Client, filters
+import os, logging
+from telethon import TelegramClient, events
 
-# Logging setup
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 
-# Environment Variables
+# Config
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION = os.environ.get("SESSION_STRING")
-TARGET_ID = -1001752144165  # Market Precision
+TARGET = -1001752144165
 
-def get_ids(var_name):
-    raw = os.getenv(var_name, "")
-    if not raw: return []
+# IDs handle karna
+def get_ids():
+    raw = os.getenv("SOURCE_PUBLIC_ID", "")
     return [int(i.strip()) for i in raw.split(",") if i.strip()]
 
-SOURCE_IDS = get_ids("SOURCE_PUBLIC_ID")
+SOURCE_IDS = get_ids()
 
-# Client Initialization
-app = Client(
-    "rt_final_copier",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    session_string=SESSION,
-    in_memory=True
-)
+client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-@app.on_message(filters.chat(SOURCE_IDS))
-async def mirror_handler(client, message):
-    logging.info(f"🎯 SIGNAL DETECTED from {message.chat.id}")
+@client.on(events.NewMessage(chats=SOURCE_IDS))
+async def handler(event):
+    logging.info(f"🎯 NEW MESSAGE DETECTED from {event.chat_id}")
     try:
-        # Step 1: Try Direct Copy
-        await message.copy(TARGET_ID)
-        logging.info("✅ SUCCESS: Mirrored to Market Precision")
+        await client.send_message(TARGET, event.message)
+        logging.info("✅ SUCCESS: Mirrored")
     except Exception as e:
-        logging.error(f"⚠️ Copy failed ({e}), trying Text Fallback...")
-        try:
-            # Step 2: Fallback for Restricted Channels
-            if message.text:
-                await client.send_message(TARGET_ID, message.text)
-            elif message.caption:
-                await client.send_message(TARGET_ID, message.caption)
-            logging.info("✅ SUCCESS: Mirrored via Fallback")
-        except Exception as e2:
-            logging.error(f"❌ FATAL ERROR: {e2}")
-
-@app.on_message(filters.me & filters.private)
-async def test_self(client, message):
-    if message.text == "ping":
-        await message.reply("pong! System is alive. ✅")
-        logging.info("PING-PONG Test successful!")
+        logging.error(f"❌ ERROR: {e}")
 
 async def main():
-    logging.info("Starting UserBot...")
-    await app.start()
-    
-    # Syncing: Ye line IDs recognize karne mein madad karti hai
-    logging.info("Syncing dialogues...")
-    async for dialog in app.get_dialogs(limit=20):
-        pass
-    
-    me = await app.get_me()
-    logging.info(f"--- SYSTEM ONLINE ---")
-    logging.info(f"User: {me.first_name} (@{me.username})")
-    logging.info(f"Monitoring Sources: {SOURCE_IDS}")
-    logging.info(f"Target ID: {TARGET_ID}")
-    
-    await asyncio.Event().wait()
+    await client.start()
+    print("--- TELETHON SYSTEM ONLINE ---")
+    print(f"Monitoring: {SOURCE_IDS}")
+    await client.run_until_disconnected()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
+    import asyncio
+    from telethon.sessions import StringSession
     asyncio.run(main())
