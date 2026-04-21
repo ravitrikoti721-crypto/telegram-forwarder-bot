@@ -1,4 +1,4 @@
-import os, logging, asyncio, re
+import os, logging, asyncio, re, random
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
@@ -18,29 +18,55 @@ def get_ids():
 SOURCE_IDS = get_ids()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
+# Mapping for replies/edits/deletes
 reply_map = {}
 
 # --- CLEANING LOGIC ---
 def clean_message(text):
-    if not text: return ""
-    promo_keywords = ["Renew it Today", "PRIME plan", "Membership Is Expiring", "Watch here", "new video", "Finance with Sunil", "Kapil Verma"]
-    if any(key.lower() in text.lower() for key in promo_keywords): return None
+    if not text:
+        return ""
 
-    text = re.sub(r'https?:\/\/(www\.)?(youtube\.be|yt\.openinapp\.co|twitter\.com|x\.com|cosmofeed\.com|revlu\.in|revlu\.link|t\.me)\/\S+', '', text)
+    # Skip strictly promotional content
+    promo_keywords = [
+        "Renew it Today", "PRIME plan", "Membership Is Expiring", 
+        "Weekend Market Analysis", "Watch here", "new video", 
+        "Finance with Sunil", "Kapil Verma", "SG Options Training"
+    ]
+    if any(key.lower() in text.lower() for key in promo_keywords):
+        return None
+
+    # 1. Hatao saare Links (Twitter, YouTube, Payment, etc.)
+    text = re.sub(r'https?:\/\/(www\.)?(youtube\.com|youtu\.be|yt\.openinapp\.co|twitter\.com|x\.com|cosmofeed\.com|revlu\.in|revlu\.link|t\.me)\/\S+', '', text)
+    
+    # 2. Hatao Usernames (@username)
     text = re.sub(r'@\S+', '', text)
-    bad_words = ["Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision", "Sunil", "Sunit", "PRIME plan", "SG Options Training"]
+
+    # 3. Specific Brand Names Removal
+    bad_words = [
+        "Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision",
+        "Finance with Sunil", "Sunil", "Sunit", "PRIME plan", "SG Options Training",
+        "REGISTERED RA", "Advanced Trading Group"
+    ]
+    
     for word in bad_words:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
-    return re.sub(r'\n\s*\n', '\n\n', text).strip()
+
+    # 4. Final Cleanup
+    text = re.sub(r'\n\s*\n', '\n\n', text).strip()
+    return text
 
 # --- HANDLERS ---
 
 @client.on(events.NewMessage(chats=SOURCE_IDS))
 async def handler(event):
-    logging.info(f"🎯 NEW MESSAGE detected from {event.chat_id}")
+    logging.info(f"🎯 New message detected from {event.chat_id}")
     try:
         cleaned_text = clean_message(event.raw_text)
-        if cleaned_text is None: return
+        if cleaned_text is None:
+            return
+
+        # --- STEALTH DELAY (10 to 30 seconds) ---
+        await asyncio.sleep(random.randint(10, 30))
 
         reply_to = reply_map.get(event.reply_to_msg_id) if event.reply_to_msg_id else None
 
@@ -50,7 +76,8 @@ async def handler(event):
             sent_msg = await client.send_message(TARGET, cleaned_text, reply_to=reply_to)
         
         reply_map[event.id] = sent_msg.id
-        logging.info(f"✅ SUCCESS: Mirrored msg {event.id}")
+        logging.info(f"✅ Mirrored msg {event.id}")
+        
     except Exception as e:
         logging.error(f"❌ Error in NewMessage: {e}")
 
@@ -60,8 +87,7 @@ async def edit_handler(event):
         target_msg_id = reply_map.get(event.id)
         if target_msg_id:
             cleaned_text = clean_message(event.raw_text)
-            target_msg = await client.get_messages(TARGET, ids=target_msg_id)
-            if cleaned_text and target_msg and target_msg.text != cleaned_text:
+            if cleaned_text:
                 await client.edit_message(TARGET, target_msg_id, cleaned_text)
     except Exception as e:
         if "message was not modified" not in str(e):
@@ -76,21 +102,24 @@ async def delete_handler(event):
                 await client.delete_messages(TARGET, target_msg_id)
                 del reply_map[msg_id]
     except Exception as e:
-        logging.error(f"❌ Error in Delete: {e}")
+        pass
 
-# --- STARTUP SYNC ---
+# --- STARTUP SYNC & RUN ---
 async def main():
     await client.start()
-    logging.info("--- SYSTEM ONLINE | SYNCING SOURCES ---")
+    logging.info("--- GHOST SYSTEM V4 ONLINE | SYNCING SOURCES ---")
     
-    # Restricted channels ke liye forcefully entity fetch karna
+    # Forceful Sync for Restricted Channels
     for s_id in SOURCE_IDS:
         try:
             entity = await client.get_entity(s_id)
-            logging.info(f"✅ Synced with: {entity.title} ({s_id})")
+            # Fetch last 1 message just to keep the connection alive
+            async for msg in client.iter_messages(entity, limit=1):
+                pass
+            logging.info(f"✅ Successfully synced with: {entity.title}")
         except Exception as e:
-            logging.warning(f"⚠️ Could not sync ID {s_id}: {e}")
-            
+            logging.warning(f"⚠️ Could not sync with ID {s_id}: {e}")
+
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
