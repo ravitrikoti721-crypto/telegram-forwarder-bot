@@ -18,80 +18,69 @@ SOURCE_IDS = get_ids()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 reply_map = {}
 
-# --- CLEANING LOGIC ---
+# --- RELAXED CLEANING LOGIC ---
 def clean_message(text):
     if not text: return ""
-    # Agar message mein yeh keywords hain toh pura skip kar do
-    promo_keywords = ["Renew", "PRIME", "Membership", "Watch here", "new video", "Sunil", "Kapil Verma", "SG Options"]
+    
+    # Strictly promotional content block (Sirf renewals aur videos hatao)
+    promo_keywords = ["Renew", "Membership Is Expiring", "new video", "Finance with Sunil"]
     if any(key.lower() in text.lower() for key in promo_keywords): 
         return None
 
-    # Hatao Links aur Usernames
+    # Hatao Links aur @usernames (Twitter/YT links included)
     text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
     
-    # Hatao Creator ke names
+    # Hatao sirf Creator ke specific IDs/Names
     bad_words = ["Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision", "REGISTERED RA", "Advanced Trading Group"]
     for word in bad_words:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     
+    # Hatao hashtags jo gande lagte hain
+    text = text.replace("#PRIMEPOWER", "").replace("#PRIME", "")
+    
     return re.sub(r'\n\s*\n', '\n\n', text).strip()
 
-# --- HANDLERS ---
-
-@client.on(events.NewMessage(chats=SOURCE_IDS))
-async def handler(event):
-    logging.info(f"📩 Message from {event.chat_id} detected.")
+async def mirror_logic(msg):
     try:
-        cleaned_text = clean_message(event.raw_text)
+        if msg.id in reply_map: return 
+        
+        cleaned_text = clean_message(msg.text)
         if cleaned_text is None: return
 
-        # REPLY TRACKING
-        reply_to = reply_map.get(event.reply_to_msg_id) if event.reply_to_msg_id else None
+        reply_to = reply_map.get(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
 
-        # SENDING (No Delay for speed)
-        if event.media:
-            sent_msg = await client.send_message(TARGET, cleaned_text, file=event.media, reply_to=reply_to)
+        if msg.media:
+            # Agar image ke sath caption hai toh cleaned_text jayega
+            sent_msg = await client.send_message(TARGET, cleaned_text, file=msg.media, reply_to=reply_to)
         else:
             sent_msg = await client.send_message(TARGET, cleaned_text, reply_to=reply_to)
         
-        reply_map[event.id] = sent_msg.id
-        logging.info(f"✅ SUCCESS: Mirrored msg {event.id}")
-        
+        reply_map[msg.id] = sent_msg.id
+        logging.info(f"✅ Mirrored: {msg.id}")
     except Exception as e:
         logging.error(f"❌ Error: {e}")
 
-@client.on(events.MessageEdited(chats=SOURCE_IDS))
-async def edit_handler(event):
-    try:
-        target_msg_id = reply_map.get(event.id)
-        if target_msg_id:
-            cleaned_text = clean_message(event.raw_text)
-            if cleaned_text:
-                await client.edit_message(TARGET, target_msg_id, cleaned_text)
-    except Exception as e: pass
+@client.on(events.NewMessage(chats=SOURCE_IDS))
+async def handler(event):
+    await mirror_logic(event.message)
 
-@client.on(events.MessageDeleted())
-async def delete_handler(event):
-    try:
-        for msg_id in event.deleted_ids:
-            target_msg_id = reply_map.get(msg_id)
-            if target_msg_id:
-                await client.delete_messages(TARGET, target_msg_id)
-                del reply_map[msg_id]
-    except Exception as e: pass
+# Force Polling for Restricted Channels (Keeping it active)
+async def poll_restricted_channels():
+    while True:
+        try:
+            for s_id in SOURCE_IDS:
+                async for msg in client.iter_messages(s_id, limit=5):
+                    if msg.id not in reply_map:
+                        await mirror_logic(msg)
+            await asyncio.sleep(60) 
+        except:
+            await asyncio.sleep(60)
 
 async def main():
     await client.start()
-    logging.info("--- SYSTEM V6 ONLINE (FAST MODE) ---")
-    
-    # Stock Precision restricted sync
-    for s_id in SOURCE_IDS:
-        try:
-            e = await client.get_entity(s_id)
-            logging.info(f"✅ Sync Successful: {e.title}")
-        except: pass
-
+    logging.info("--- SYSTEM V8 BALANCED ONLINE ---")
+    client.loop.create_task(poll_restricted_channels())
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
