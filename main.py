@@ -18,7 +18,7 @@ def get_ids():
 SOURCE_IDS = get_ids()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# Mapping: {source_msg_id: target_msg_id} to track replies/edits/deletes
+# Mapping for replies/edits/deletes
 reply_map = {}
 
 # --- CLEANING LOGIC ---
@@ -26,90 +26,81 @@ def clean_message(text):
     if not text:
         return ""
 
-    # Skip purely promotional or YouTube alerts
+    # 1. Skip strictly promotional content (Captions check)
     promo_keywords = [
         "Renew it Today", "PRIME plan", "Membership Is Expiring", 
-        "Weekend Market Analysis", "Watch here", "new video", "LIVE!",
-        "Finance with Sunil", "Sunit", "Sunil"
+        "Weekend Market Analysis", "Watch here", "new video", 
+        "Finance with Sunil", "Sunil", "Sunit", "SG Options Training",
+        "Registered RA", "Kapil Verma"
     ]
+    
+    # Agar text mein inme se kuch bhi hai, toh skip kar do
     if any(key.lower() in text.lower() for key in promo_keywords):
         return None
 
-    # 1. Hatao saare Links (Twitter, YouTube, Payment, Telegram)
+    # 2. Hatao saare Links
     text = re.sub(r'https?:\/\/(www\.)?(youtube\.com|youtu\.be|yt\.openinapp\.co|twitter\.com|x\.com|cosmofeed\.com|revlu\.in|revlu\.link|t\.me)\/\S+', '', text)
     
-    # 2. Hatao Usernames (@username)
+    # 3. Hatao Usernames
     text = re.sub(r'@\S+', '', text)
 
-    # 3. Specific Brand Names Removal
+    # 4. Remove Specific Brand Names from text
     bad_words = [
         "Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision",
-        "Finance with Sunil", "Sunil", "Sunit", "Weekend Market Analysis",
-        "PRIME plan", "Ping", "Join our SEBI Registered", "guided advisory", 
-        "Advanced Equity Trading Group"
+        "Finance with Sunil", "Sunil", "Sunit", "SG Options Training",
+        "Ping", "Join our SEBI Registered", "guided advisory", 
+        "Advanced Equity Trading Group", "REGISTERED RA"
     ]
     
     for word in bad_words:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
 
-    # 4. Final Cleanup (Extra spaces aur lines)
+    # 5. Final Cleanup
     text = re.sub(r'\n\s*\n', '\n\n', text).strip()
     
-    # Return None if nothing meaningful is left
-    if not text and not any(char.isalnum() for char in (text or "")):
-        return ""
-        
     return text
 
 # --- HANDLERS ---
 
-# 1. Handle New Messages
 @client.on(events.NewMessage(chats=SOURCE_IDS))
 async def handler(event):
-    logging.info(f"🎯 NEW MESSAGE detected from {event.chat_id}")
     try:
-        cleaned_text = clean_message(event.raw_text)
+        # Check both raw_text (normal) and caption
+        original_text = event.raw_text
+        cleaned_text = clean_message(original_text)
+        
+        # Agar promotional hai toh skip
         if cleaned_text is None:
-            logging.info("⏭️ Promo/YouTube message skipped.")
+            logging.info(f"⏭️ Message {event.id} skipped due to promotion.")
             return
 
-        # Reply logic
         reply_to = reply_map.get(event.reply_to_msg_id) if event.reply_to_msg_id else None
 
         if event.media:
+            # Agar image ke caption mein promotional text hai, tab bhi skip hoga
             sent_msg = await client.send_message(TARGET, cleaned_text, file=event.media, reply_to=reply_to)
         else:
             sent_msg = await client.send_message(TARGET, cleaned_text, reply_to=reply_to)
         
-        # Save ID for future edits/deletes/replies
         reply_map[event.id] = sent_msg.id
-        logging.info(f"✅ SUCCESS: Mirrored msg {event.id}")
         
     except Exception as e:
         logging.error(f"❌ Error in NewMessage: {e}")
 
-# 2. Handle Edited Messages
 @client.on(events.MessageEdited(chats=SOURCE_IDS))
 async def edit_handler(event):
     try:
         target_msg_id = reply_map.get(event.id)
         if target_msg_id:
             cleaned_text = clean_message(event.raw_text)
-            
-            # Fetch target message to compare content
             target_msg = await client.get_messages(TARGET, ids=target_msg_id)
             
-            # Edit only if text is actually different
             if cleaned_text and target_msg and target_msg.text != cleaned_text:
                 await client.edit_message(TARGET, target_msg_id, cleaned_text)
-                logging.info(f"📝 SUCCESS: Message {event.id} edited in target.")
-            else:
-                logging.info(f"ℹ️ Edit ignored: Content same or promo for {event.id}")
     except Exception as e:
         if "message was not modified" not in str(e):
             logging.error(f"❌ Error in Edit: {e}")
 
-# 3. Handle Deleted Messages
 @client.on(events.MessageDeleted())
 async def delete_handler(event):
     try:
@@ -117,15 +108,13 @@ async def delete_handler(event):
             target_msg_id = reply_map.get(msg_id)
             if target_msg_id:
                 await client.delete_messages(TARGET, target_msg_id)
-                logging.info(f"🗑️ SUCCESS: Message {msg_id} deleted from target.")
                 del reply_map[msg_id]
     except Exception as e:
         logging.error(f"❌ Error in Delete: {e}")
 
-# --- START BOT ---
 async def main():
     await client.start()
-    logging.info("--- FULL SYNC MIRROR SYSTEM ONLINE (V3.0) ---")
+    logging.info("--- SYSTEM ONLINE (SCREENSHOT FILTER ENABLED) ---")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
