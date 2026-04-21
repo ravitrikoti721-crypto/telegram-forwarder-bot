@@ -17,76 +17,68 @@ def get_ids():
 SOURCE_IDS = get_ids()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- ADVANCED CLEANING LOGIC ---
+# Mapping: {source_msg_id: target_msg_id}
+reply_map = {}
+
 def clean_message(text):
-    if not text:
-        return ""
+    if not text: return ""
+    promo_keywords = ["Renew it Today", "PRIME plan", "Membership Is Expiring", "Watch here", "new video", "Finance with Sunil"]
+    if any(key.lower() in text.lower() for key in promo_keywords): return None
 
-    # 1. Skip messages that are purely promotional or YouTube alerts
-    promo_keywords = [
-        "Renew it Today", "PRIME plan", "Membership Is Expiring", 
-        "Weekend Market Analysis", "Watch here", "new video", "LIVE!",
-        "Finance with Sunil", "Sunit", "Sunil"
-    ]
-    if any(key.lower() in text.lower() for key in promo_keywords):
-        logging.info("🚫 Skipping promotional/YouTube alert.")
-        return None
-
-    # 2. Hatao YouTube aur baaki social links
-    text = re.sub(r'https?:\/\/(www\.)?(youtube\.com|youtu\.be|yt\.openinapp\.co)\/\S+', '', text)
-    text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com)\/\S+', '', text)
-    
-    # 3. Hatao Payment links (Cosmofeed, Revlu)
-    text = re.sub(r'https?:\/\/(cosmofeed\.com|revlu\.in|revlu\.link)\/\S+', '', text)
-    
-    # 4. Hatao generic Telegram links aur usernames
-    text = re.sub(r'https?:\/\/t\.me\/\S+', '', text)
+    text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
-
-    # 5. Specific Bad Words Removal (Including new ones)
-    bad_words = [
-        "Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision",
-        "Finance with Sunil", "Sunil", "Sunit", "Weekend Market Analysis",
-        "Watch here", "new video", "PRIME plan", "Ping", "Join our SEBI Registered",
-        "guided advisory", "Advanced Equity Trading Group"
-    ]
-    
+    bad_words = ["Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision", "Sunil", "Sunit"]
     for word in bad_words:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
+    return re.sub(r'\n\s*\n', '\n\n', text).strip()
 
-    # 6. Final Cleanup
-    text = re.sub(r'\n\s*\n', '\n\n', text).strip()
-    
-    # Check if anything meaningful is left
-    if not text or (len(text) < 5 and not any(char.isalnum() for char in text)):
-        return None
-        
-    return text
-
+# 1. Naya Message Handler
 @client.on(events.NewMessage(chats=SOURCE_IDS))
 async def handler(event):
-    logging.info(f"🎯 NEW SIGNAL from {event.chat_id}")
     try:
-        original_text = event.raw_text
-        cleaned_text = clean_message(original_text)
-        
-        if cleaned_text is None:
-            logging.info("⏭️ Message skipped (Promotion/YouTube).")
-            return
+        cleaned_text = clean_message(event.raw_text)
+        if cleaned_text is None: return
+
+        reply_to = reply_map.get(event.reply_to_msg_id) if event.reply_to_msg_id else None
 
         if event.media:
-            # Video thumbnails ya promotional posters ko skip karne ke liye check
-            await client.send_message(TARGET, cleaned_text, file=event.media)
+            sent_msg = await client.send_message(TARGET, cleaned_text, file=event.media, reply_to=reply_to)
         else:
-            await client.send_message(TARGET, cleaned_text)
-            
-        logging.info("✅ SUCCESS: Professional Clean & Mirror")
+            sent_msg = await client.send_message(TARGET, cleaned_text, reply_to=reply_to)
+        
+        reply_map[event.id] = sent_msg.id
     except Exception as e:
-        logging.error(f"❌ ERROR: {e}")
+        logging.error(f"Error in NewMessage: {e}")
+
+# 2. Edit Message Handler
+@client.on(events.MessageEdited(chats=SOURCE_IDS))
+async def edit_handler(event):
+    try:
+        target_msg_id = reply_map.get(event.id)
+        if target_msg_id:
+            cleaned_text = clean_message(event.raw_text)
+            if cleaned_text:
+                await client.edit_message(TARGET, target_msg_id, cleaned_text)
+                logging.info(f"✅ Message {event.id} edited in Target.")
+    except Exception as e:
+        logging.error(f"Error in Edit: {e}")
+
+# 3. Delete Message Handler
+@client.on(events.MessageDeleted())
+async def delete_handler(event):
+    try:
+        for msg_id in event.deleted_ids:
+            target_msg_id = reply_map.get(msg_id)
+            if target_msg_id:
+                await client.delete_messages(TARGET, target_msg_id)
+                logging.info(f"🗑️ Message {msg_id} deleted from Target.")
+                del reply_map[msg_id]
+    except Exception as e:
+        logging.error(f"Error in Delete: {e}")
 
 async def main():
     await client.start()
-    logging.info("--- 24/7 SURGICAL CLEANER ONLINE ---")
+    logging.info("--- FULL SYNC (EDIT/DELETE/REPLY) ONLINE ---")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
