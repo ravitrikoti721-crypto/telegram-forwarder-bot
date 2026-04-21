@@ -18,72 +18,39 @@ def get_ids():
 SOURCE_IDS = get_ids()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# Mapping for replies/edits/deletes
 reply_map = {}
 
 # --- CLEANING LOGIC ---
 def clean_message(text):
-    if not text:
-        return ""
+    if not text: return ""
+    promo_keywords = ["Renew it Today", "PRIME plan", "Membership Is Expiring", "Watch here", "new video", "Finance with Sunil", "Kapil Verma"]
+    if any(key.lower() in text.lower() for key in promo_keywords): return None
 
-    # 1. Skip strictly promotional content (Captions check)
-    promo_keywords = [
-        "Renew it Today", "PRIME plan", "Membership Is Expiring", 
-        "Weekend Market Analysis", "Watch here", "new video", 
-        "Finance with Sunil", "Sunil", "Sunit", "SG Options Training",
-        "Registered RA", "Kapil Verma"
-    ]
-    
-    # Agar text mein inme se kuch bhi hai, toh skip kar do
-    if any(key.lower() in text.lower() for key in promo_keywords):
-        return None
-
-    # 2. Hatao saare Links
-    text = re.sub(r'https?:\/\/(www\.)?(youtube\.com|youtu\.be|yt\.openinapp\.co|twitter\.com|x\.com|cosmofeed\.com|revlu\.in|revlu\.link|t\.me)\/\S+', '', text)
-    
-    # 3. Hatao Usernames
+    text = re.sub(r'https?:\/\/(www\.)?(youtube\.be|yt\.openinapp\.co|twitter\.com|x\.com|cosmofeed\.com|revlu\.in|revlu\.link|t\.me)\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
-
-    # 4. Remove Specific Brand Names from text
-    bad_words = [
-        "Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision",
-        "Finance with Sunil", "Sunil", "Sunit", "SG Options Training",
-        "Ping", "Join our SEBI Registered", "guided advisory", 
-        "Advanced Equity Trading Group", "REGISTERED RA"
-    ]
-    
+    bad_words = ["Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision", "Sunil", "Sunit", "PRIME plan", "SG Options Training"]
     for word in bad_words:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
-
-    # 5. Final Cleanup
-    text = re.sub(r'\n\s*\n', '\n\n', text).strip()
-    
-    return text
+    return re.sub(r'\n\s*\n', '\n\n', text).strip()
 
 # --- HANDLERS ---
 
 @client.on(events.NewMessage(chats=SOURCE_IDS))
 async def handler(event):
+    logging.info(f"🎯 NEW MESSAGE detected from {event.chat_id}")
     try:
-        # Check both raw_text (normal) and caption
-        original_text = event.raw_text
-        cleaned_text = clean_message(original_text)
-        
-        # Agar promotional hai toh skip
-        if cleaned_text is None:
-            logging.info(f"⏭️ Message {event.id} skipped due to promotion.")
-            return
+        cleaned_text = clean_message(event.raw_text)
+        if cleaned_text is None: return
 
         reply_to = reply_map.get(event.reply_to_msg_id) if event.reply_to_msg_id else None
 
         if event.media:
-            # Agar image ke caption mein promotional text hai, tab bhi skip hoga
             sent_msg = await client.send_message(TARGET, cleaned_text, file=event.media, reply_to=reply_to)
         else:
             sent_msg = await client.send_message(TARGET, cleaned_text, reply_to=reply_to)
         
         reply_map[event.id] = sent_msg.id
-        
+        logging.info(f"✅ SUCCESS: Mirrored msg {event.id}")
     except Exception as e:
         logging.error(f"❌ Error in NewMessage: {e}")
 
@@ -94,7 +61,6 @@ async def edit_handler(event):
         if target_msg_id:
             cleaned_text = clean_message(event.raw_text)
             target_msg = await client.get_messages(TARGET, ids=target_msg_id)
-            
             if cleaned_text and target_msg and target_msg.text != cleaned_text:
                 await client.edit_message(TARGET, target_msg_id, cleaned_text)
     except Exception as e:
@@ -112,9 +78,19 @@ async def delete_handler(event):
     except Exception as e:
         logging.error(f"❌ Error in Delete: {e}")
 
+# --- STARTUP SYNC ---
 async def main():
     await client.start()
-    logging.info("--- SYSTEM ONLINE (SCREENSHOT FILTER ENABLED) ---")
+    logging.info("--- SYSTEM ONLINE | SYNCING SOURCES ---")
+    
+    # Restricted channels ke liye forcefully entity fetch karna
+    for s_id in SOURCE_IDS:
+        try:
+            entity = await client.get_entity(s_id)
+            logging.info(f"✅ Synced with: {entity.title} ({s_id})")
+        except Exception as e:
+            logging.warning(f"⚠️ Could not sync ID {s_id}: {e}")
+            
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
