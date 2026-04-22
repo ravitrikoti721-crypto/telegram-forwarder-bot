@@ -10,7 +10,7 @@ API_HASH = os.environ.get("API_HASH")
 SESSION = os.environ.get("SESSION_STRING")
 TARGET = -1001752144165 
 
-# --- DATABASE SETUP (Prevents Duplicates & Saves Replies) ---
+# --- DATABASE SETUP ---
 DB_FILE = "bot_data.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -33,21 +33,18 @@ def get_tgt_id(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- CLEANING LOGIC ---
+# --- ADVANCED CLEANING ---
 def clean_message(text):
     if not text: return ""
-    # Filter out promos
     if any(k.lower() in text.lower() for k in ["renew", "membership", "new video"]): return None
     
-    # Remove Disclaimer (Finance With Sunil/Stock Precision)
+    # Remove SEBI Disclaimer specifically
     text = re.sub(r"Disclaimer\s*[:-].*?SEBI Registered RA.*?advisor before taking any trade", "", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"Disclaimer\s*[:-].*?SEBI Registered.*", "", text, flags=re.IGNORECASE | re.DOTALL)
     
-    # Remove Links & Usernames
     text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
     
-    # Remove Specific Names
     for word in ["Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision", "Sunil"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     
@@ -55,35 +52,34 @@ def clean_message(text):
 
 async def mirror_logic(msg):
     try:
-        # 🛑 DUPICATE CHECK: Agar database mein hai, toh skip karo
-        if get_tgt_id(msg.id): 
-            return 
+        if get_tgt_id(msg.id): return 
 
         cleaned_text = clean_message(msg.text)
         final_text = cleaned_text if cleaned_text else ""
-
-        # 🔗 SMART REPLY: Database se purani ID uthayega
         reply_to = get_tgt_id(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
 
+        sent_msg = None
         if msg.media:
-            sent_msg = await client.send_message(TARGET, final_text, file=msg.media, reply_to=reply_to)
+            # 🚀 PROTECTED CONTENT BYPASS: Download first, then upload
+            logging.info(f"📥 Downloading media from protected chat: {msg.id}")
+            media_path = await client.download_media(msg)
+            sent_msg = await client.send_file(TARGET, media_path, caption=final_text, reply_to=reply_to)
+            if os.path.exists(media_path):
+                os.remove(media_path) # Clean up file after upload
         elif cleaned_text:
             sent_msg = await client.send_message(TARGET, final_text, reply_to=reply_to)
-        else:
-            return
-
-        # Save to DB
-        save_id(msg.id, sent_msg.id)
-        logging.info(f"✅ Mirrored & Saved: {msg.id}")
+        
+        if sent_msg:
+            save_id(msg.id, sent_msg.id)
+            logging.info(f"✅ Mirrored & Logged: {msg.id}")
         
     except Exception as e:
-        logging.error(f"❌ Error: {e}")
+        logging.error(f"❌ Bypass Error: {e}")
 
 @client.on(events.NewMessage(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
 async def handler(event):
     await mirror_logic(event.message)
 
-# Polling with protection
 async def poll_restricted():
     while True:
         try:
@@ -97,7 +93,7 @@ async def poll_restricted():
 
 async def main():
     await client.start()
-    logging.info("--- V11 SYSTEM ONLINE (NO DUPES + PERSISTENT REPLY) ---")
+    logging.info("--- V12 PROTECTED BYPASS ONLINE ---")
     client.loop.create_task(poll_restricted())
     await client.run_until_disconnected()
 
