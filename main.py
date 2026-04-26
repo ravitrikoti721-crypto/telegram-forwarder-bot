@@ -33,54 +33,52 @@ def save_id(src_id, tgt_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, connection_retries=None)
 
-# --- STRICT CLEANING ---
 def clean_message(text):
     if not text: return ""
     
-    # 1. Exception for "Update Daily" (Taki zaroori signals na ruke)
-    is_daily_update = "Update Daily" in text
+    # 1. Check for Daily Updates (Always allow)
+    is_daily_update = "Update Daily" in text or "Performance" in text
     
-    # 2. Block direct promos
+    # 2. Strict Promo Filter
     if not is_daily_update:
-        if any(k.lower() in text.lower() for k in ["renew", "membership", "new video", "gift"]): return None
+        if any(k.lower() in text.lower() for k in ["renew", "membership", "join prime"]): return None
 
-    # 3. Targeted Cleaning (Links, Usernames, specific branding)
+    # 3. Clean Branding but Keep Message Context
     text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
-    text = re.sub(r"(?i)Stock\s+Gainers\s+is\s+not\s+SEBI\s+registered.*", "", text)
-    text = re.sub(r"(?i)For\s+Prime\s+Membership\s+ping\s+@sg\d+", "", text)
     
-    # 4. Remove Logo/Platform names
-    for word in ["Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision", "Sunil", "X (formerly Twitter)"]:
+    # Remove specific brand names
+    for word in ["Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision", "Sunil"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     
-    final_text = re.sub(r'\n\s*\n', '\n\n', text).strip()
-    
-    # AGAR SIRF LOGO YA KUCH NAHI BACHA TOH SKIP
-    if not is_daily_update and len(final_text) < 5: return None
-    
-    return final_text
+    return re.sub(r'\n\s*\n', '\n\n', text).strip()
 
 async def mirror_logic(msg):
     try:
         if get_tgt_id(msg.id): return 
 
         cleaned_text = clean_message(msg.text)
-        if cleaned_text is None: return
+        
+        # Smart Check: Agar message khali hai aur media bhi nahi hai, toh skip
+        if not cleaned_text and not msg.media: return
         
         reply_to = get_tgt_id(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
 
-        # CRITICAL: link_preview=False will stop the logo box from appearing
-        if msg.media:
+        sent_msg = None
+        # Agar asli media hai (Photo/Document), toh download karke upload karo
+        if msg.media and not msg.web_preview:
+            logging.info(f"📸 Genuine Media detected: {msg.id}")
             path = await client.download_media(msg)
             sent_msg = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
             if os.path.exists(path): os.remove(path)
-        else:
-            sent_msg = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False)
+        # Agar sirf text bacha hai (ya link preview block kiya hai)
+        elif cleaned_text or msg.text:
+            final_to_send = cleaned_text if cleaned_text else "New Update (Link Removed)"
+            sent_msg = await client.send_message(TARGET, final_to_send, reply_to=reply_to, link_preview=False)
         
         if sent_msg:
             save_id(msg.id, sent_msg.id)
-            logging.info(f"✅ Clean Mirror: {msg.id}")
+            logging.info(f"✅ Mirrored: {msg.id}")
             
     except Exception as e:
         logging.error(f"❌ Error: {e}")
@@ -91,7 +89,7 @@ async def handler(event):
 
 async def main():
     await client.start()
-    logging.info("--- V17 LOGO-BLOCKER READY ---")
+    logging.info("--- V18 SMART MEDIA FILTER ONLINE ---")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
