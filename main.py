@@ -10,10 +10,6 @@ API_HASH = os.environ.get("API_HASH")
 SESSION = os.environ.get("SESSION_STRING")
 TARGET = -1001752144165 
 
-# --- CLEAN SIGNATURE ---
-# Message ke end mein 2 line ka gap aur fir sirf naam
-SIGNATURE = "\n\nKritika" 
-
 # --- DB SETUP ---
 DB_FILE = "bot_data.db"
 def init_db():
@@ -37,25 +33,21 @@ def get_tgt_id(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, connection_retries=None)
 
-# --- CLEANING + SIGNATURE LOGIC ---
-def clean_and_sign(text):
+# --- CLEANING LOGIC (Pure Mirror) ---
+def clean_message(text):
     if not text: return ""
     
-    # 1. Branding aur Ads saaf karo
+    # 1. Ads aur Branding saaf karo
     text = re.sub(r"(?i)For\s+Prime\s+Membership\s+ping\s+@sg\d+", "", text)
     text = re.sub(r"(?i)Stock\s+Gainers\s+is\s+not\s+SEBI\s+registered.*", "", text)
     text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
     
+    # 2. Source Names hatao
     for word in ["Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision", "Sunil"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     
-    cleaned = text.strip()
-    
-    # 2. Add "Kritika" at the end (Sirf tab jab message khali na ho)
-    if cleaned:
-        return f"{cleaned}{SIGNATURE}"
-    return cleaned
+    return text.strip()
 
 # --- HANDLERS ---
 @client.on(events.NewMessage(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
@@ -64,20 +56,22 @@ async def handler(event):
         msg = event.message
         if get_tgt_id(msg.id): return 
         
-        final_text = clean_and_sign(msg.text)
+        cleaned_text = clean_message(msg.text)
         reply_to = get_tgt_id(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
 
         if msg.media:
             path = await client.download_media(msg)
-            # link_preview=False taaki Twitter/External logos na aayein
-            sent_msg = await client.send_file(TARGET, path, caption=final_text, reply_to=reply_to, link_preview=False)
+            # link_preview=False taaki Twitter logos na aayein
+            sent_msg = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
             if os.path.exists(path): os.remove(path)
         else:
-            sent_msg = await client.send_message(TARGET, final_text, reply_to=reply_to, link_preview=False)
+            # Agar text khali ho jaye toh mirror nahi karna
+            if not cleaned_text: return
+            sent_msg = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False)
         
         if sent_msg:
             save_id(msg.id, sent_msg.id)
-            logging.info(f"✅ Mirrored for Kritika: {msg.id}")
+            logging.info(f"✅ Clean Mirrored: {msg.id}")
     except Exception as e:
         logging.error(f"❌ Error: {e}")
 
@@ -86,8 +80,8 @@ async def edit_handler(event):
     try:
         tgt_id = get_tgt_id(event.message.id)
         if tgt_id:
-            final_text = clean_and_sign(event.message.text)
-            await client.edit_message(TARGET, tgt_id, final_text, link_preview=False)
+            cleaned_text = clean_message(event.message.text)
+            await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False)
     except: pass
 
 @client.on(events.MessageDeleted())
@@ -100,7 +94,7 @@ async def delete_handler(event):
 
 async def main():
     await client.start()
-    logging.info("--- V26 CLEAN KRITIKA ONLINE ---")
+    logging.info("--- V27 BACK TO CLEAN MIRROR ONLINE ---")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
