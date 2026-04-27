@@ -31,70 +31,49 @@ def get_tgt_id(src_id):
     return res[0] if res else None
 
 init_db()
-client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, connection_retries=None)
 
-# --- CLEANING LOGIC (Pure Mirror) ---
-def clean_message(text):
+# High-performance client settings
+client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, 
+                        connection_retries=None, 
+                        auto_reconnect=True)
+
+def ultra_clean(text):
     if not text: return ""
-    
-    # 1. Ads aur Branding saaf karo
-    text = re.sub(r"(?i)For\s+Prime\s+Membership\s+ping\s+@sg\d+", "", text)
-    text = re.sub(r"(?i)Stock\s+Gainers\s+is\s+not\s+SEBI\s+registered.*", "", text)
+    # Sirf links aur @usernames hatao, content ko mat chhedo
     text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
-    
-    # 2. Source Names hatao
-    for word in ["Kapil Verma", "SEBI RA", "Stock Gainers", "Stock Precision", "Sunil"]:
-        text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
-    
     return text.strip()
 
-# --- HANDLERS ---
 @client.on(events.NewMessage(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
 async def handler(event):
     try:
         msg = event.message
+        # Duplicate check
         if get_tgt_id(msg.id): return 
         
-        cleaned_text = clean_message(msg.text)
+        cleaned_text = ultra_clean(msg.text)
         reply_to = get_tgt_id(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
 
         if msg.media:
+            # Direct media mirror for speed
             path = await client.download_media(msg)
-            # link_preview=False taaki Twitter logos na aayein
             sent_msg = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
             if os.path.exists(path): os.remove(path)
         else:
-            # Agar text khali ho jaye toh mirror nahi karna
-            if not cleaned_text: return
-            sent_msg = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False)
+            # Agar text khali hai cleaning ke baad bhi, toh original bhej do
+            final_msg = cleaned_text if cleaned_text else msg.text
+            sent_msg = await client.send_message(TARGET, final_msg, reply_to=reply_to, link_preview=False)
         
         if sent_msg:
             save_id(msg.id, sent_msg.id)
-            logging.info(f"✅ Clean Mirrored: {msg.id}")
+            logging.info(f"✅ Fast Mirror: {msg.id}")
+            
     except Exception as e:
         logging.error(f"❌ Error: {e}")
 
-@client.on(events.MessageEdited(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
-async def edit_handler(event):
-    try:
-        tgt_id = get_tgt_id(event.message.id)
-        if tgt_id:
-            cleaned_text = clean_message(event.message.text)
-            await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False)
-    except: pass
-
-@client.on(events.MessageDeleted())
-async def delete_handler(event):
-    try:
-        for msg_id in event.deleted_ids:
-            tgt_id = get_tgt_id(msg_id)
-            if tgt_id: await client.delete_messages(TARGET, tgt_id)
-    except: pass
-
 async def main():
     await client.start()
-    logging.info("--- V27 BACK TO CLEAN MIRROR ONLINE ---")
+    logging.info("--- V28 ULTRA-FAST MIRROR ONLINE ---")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
