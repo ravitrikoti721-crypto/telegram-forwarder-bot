@@ -1,6 +1,7 @@
 import os, logging, asyncio, re, sqlite3
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+from telethon.tl.types import MessageMediaWebPage
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -32,46 +33,50 @@ def get_tgt_id(src_id):
 
 init_db()
 
-# Optimized for Paid Tier - Heavy Retry & Fast Reconnect
+# Optimized for Paid Tier
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, 
                         connection_retries=None, 
-                        auto_reconnect=True,
-                        request_retries=10,
-                        retry_delay=1)
+                        auto_reconnect=True)
 
-def minimal_clean(text):
+def ultra_clean(text):
     if not text: return ""
-    # Sirf links aur @usernames hatao, baki Metal Focus wagera sab aane do
+    # Sirf links aur usernames hatana hai
     text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
     return text.strip()
 
-@client.on(events.NewMessage(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
-async def handler(event):
+async def mirror_logic(msg):
     try:
-        msg = event.message
         if get_tgt_id(msg.id): return 
         
-        cleaned_text = minimal_clean(msg.text)
+        cleaned_text = ultra_clean(msg.text)
         reply_to = get_tgt_id(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
 
-        if msg.media:
-            # Paid server speed - Download and Upload
+        # LOGO BLOCKER: Agar media sirf Twitter ka preview hai (WebPage), toh usey skip karo
+        if msg.media and isinstance(msg.media, MessageMediaWebPage):
+            sent_msg = await client.send_message(TARGET, cleaned_text or "Update", reply_to=reply_to, link_preview=False)
+        elif msg.media:
+            # Genuine Photo/Chart
             path = await client.download_media(msg)
             sent_msg = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
             if os.path.exists(path): os.remove(path)
         else:
-            final_msg = cleaned_text if cleaned_text else msg.text
-            sent_msg = await client.send_message(TARGET, final_msg, reply_to=reply_to, link_preview=False)
+            # Plain Text
+            sent_msg = await client.send_message(TARGET, cleaned_text or msg.text, reply_to=reply_to, link_preview=False)
         
         if sent_msg:
             save_id(msg.id, sent_msg.id)
-            logging.info(f"✅ Instant Mirror: {msg.id}")
+            logging.info(f"✅ Instant Mirror (V30): {msg.id}")
             
     except Exception as e:
         logging.error(f"❌ Error: {e}")
 
-# Added Polling as a secondary backup because Paid server can handle it
+# Real-time Handler
+@client.on(events.NewMessage(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
+async def handler(event):
+    await mirror_logic(event.message)
+
+# Backup Polling (Har 10 sec) for Paid Tier
 async def backup_poll():
     while True:
         try:
@@ -79,13 +84,13 @@ async def backup_poll():
             for s_id in s_ids:
                 async for msg in client.iter_messages(s_id, limit=3):
                     if not get_tgt_id(msg.id):
-                        await handler(events.NewMessage.Event(msg))
-            await asyncio.sleep(15) # 15 second gap is safe for Paid Tier
-        except: await asyncio.sleep(20)
+                        await mirror_logic(msg)
+            await asyncio.sleep(10)
+        except: await asyncio.sleep(15)
 
 async def main():
     await client.start()
-    logging.info("--- V29 PAID TIER OPTIMIZED ONLINE ---")
+    logging.info("--- V30 LOGO-SHUTDOWN ONLINE ---")
     client.loop.create_task(backup_poll())
     await client.run_until_disconnected()
 
