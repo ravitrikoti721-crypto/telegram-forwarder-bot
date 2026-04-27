@@ -33,28 +33,28 @@ def get_tgt_id(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, connection_retries=None, auto_reconnect=True)
 
-def clean_text(text):
+def quick_clean(text):
     if not text: return ""
-    # Sirf links aur @usernames hatao
+    # Links aur @usernames hatao (Logo block karne ke liye link_preview=False niche use kiya hai)
     text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
-    # Source names removal
-    for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Stock Precision"]:
+    for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     return text.strip()
 
-# NEW MESSAGE ONLY (No Polling to avoid old message flood)
+# --- 1. NEW MESSAGE ---
 @client.on(events.NewMessage(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
 async def handler(event):
     try:
         msg = event.message
         if get_tgt_id(msg.id): return 
         
-        cleaned_text = clean_text(msg.text)
+        cleaned_text = quick_clean(msg.text)
         reply_to = get_tgt_id(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
 
         if msg.media:
             path = await client.download_media(msg)
+            # link_preview=False ensures no external logos/previews appear
             sent_msg = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
             if os.path.exists(path): os.remove(path)
         else:
@@ -63,31 +63,35 @@ async def handler(event):
         
         if sent_msg:
             save_id(msg.id, sent_msg.id)
-            logging.info(f"✅ Live Mirror: {msg.id}")
-            
+            logging.info(f"✅ Fast Mirror: {msg.id}")
     except Exception as e:
         logging.error(f"❌ Error: {e}")
 
-# Edit & Delete Handlers (Optional but kept for sync)
+# --- 2. EDIT HANDLER ---
 @client.on(events.MessageEdited(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
 async def edit_handler(event):
     try:
         tgt_id = get_tgt_id(event.message.id)
         if tgt_id:
-            await client.edit_message(TARGET, tgt_id, clean_text(event.message.text), link_preview=False)
+            cleaned_text = quick_clean(event.message.text)
+            await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False)
+            logging.info(f"✏️ Edited: {event.message.id}")
     except: pass
 
+# --- 3. DELETE HANDLER ---
 @client.on(events.MessageDeleted())
 async def delete_handler(event):
     try:
         for msg_id in event.deleted_ids:
             tgt_id = get_tgt_id(msg_id)
-            if tgt_id: await client.delete_messages(TARGET, tgt_id)
+            if tgt_id: 
+                await client.delete_messages(TARGET, tgt_id)
+                logging.info(f"🗑️ Deleted: {msg_id}")
     except: pass
 
 async def main():
     await client.start()
-    logging.info("--- V33 LIVE STABLE MODE ONLINE ---")
+    logging.info("--- V35 BALANCED MODE ONLINE ---")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
