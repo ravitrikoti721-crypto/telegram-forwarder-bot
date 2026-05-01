@@ -1,4 +1,4 @@
-import os, logging, asyncio, re, sqlite3, random, string
+import os, logging, asyncio, re, sqlite3
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from datetime import datetime, timezone
@@ -21,8 +21,9 @@ else:
 
 START_TIME = datetime.now(timezone.utc)
 
-# --- DB SETUP ---
+# --- DB ---
 DB_FILE = "bot_data.db"
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     conn.execute("CREATE TABLE IF NOT EXISTS mapping (src_id INTEGER PRIMARY KEY, tgt_id INTEGER, last_text TEXT)")
@@ -44,69 +45,125 @@ def get_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- THE METADATA KILLER ---
+# --- CLEANERS ---
+
+def break_links(text):
+    # Break http so Telegram can't detect links
+    return re.sub(r'http', 'h\u200Bttp', text)
+
 def metadata_killer_clean(text):
-    if not text: return ""
-    # 1. Hard Remove Twitter/X/T.co
+    if not text:
+        return ""
+
+    # Remove Twitter/X/t.co links
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
-    # 2. Hard Remove all URLs
+
+    # Remove ALL URLs
     text = re.sub(r'https?:\/\/\S+', '', text)
-    # 3. Filter Keywords
+
+    # Remove unwanted keywords
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
-    
-    # 4. Anti-Cache Injection: Adding an invisible char to break Telegram's link detection
+
+    # Break remaining links
+    text = break_links(text)
+
+    # Add invisible char
     return text.strip() + "\u200C"
+
+# --- MAIN PROCESS ---
+
+async def send_clean_message(cleaned_text, reply_to):
+    # Step 1: Send blank (nuclear anti-preview)
+    sent = await client.send_message(
+        TARGET,
+        "‎",
+        reply_to=reply_to,
+        link_preview=False,
+        formatting_entities=[]
+    )
+
+    # Step 2: Edit with clean text
+    await client.edit_message(
+        TARGET,
+        sent.id,
+        cleaned_text,
+        link_preview=False,
+        formatting_entities=[]
+    )
+
+    return sent
 
 async def process_msg(msg):
     try:
-        if msg.date < START_TIME: return
+        if msg.date < START_TIME:
+            return
+
         tgt_id, last_text = get_mapping(msg.id)
         cleaned_text = metadata_killer_clean(msg.text)
 
         if not tgt_id:
-            if not cleaned_text and not msg.media: return
+            if not cleaned_text and not msg.media:
+                return
+
             reply_to = get_mapping(msg.reply_to_msg_id)[0] if msg.reply_to_msg_id else None
-            
-            # --- THE NUCLEAR SEND ---
-            # We use 'silent=True' and forced 'link_preview=False'
+
+            # --- MEDIA ---
             if msg.media and any(ext in (msg.file.ext or "") for ext in ['.jpg', '.png', '.jpeg']):
                 path = await client.download_media(msg)
-                sent = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
-                if os.path.exists(path): os.remove(path)
+
+                sent = await client.send_file(
+                    TARGET,
+                    path,
+                    caption=cleaned_text,
+                    reply_to=reply_to,
+                    link_preview=False,
+                    formatting_entities=[]
+                )
+
+                if os.path.exists(path):
+                    os.remove(path)
+
             else:
-                # IMPORTANT: Sending as a plain message with NO formatting at all
-                sent = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False, silent=True)
-            
+                sent = await send_clean_message(cleaned_text, reply_to)
+
             if sent:
                 save_mapping(msg.id, sent.id, cleaned_text)
-                # DESTRUCTIVE EDIT: Immediately edit to remove any metadata Telegram might have grabbed
-                await asyncio.sleep(0.4)
-                try:
-                    await client.edit_message(TARGET, sent.id, cleaned_text, link_preview=False)
-                except: pass
 
         elif last_text != cleaned_text:
-            await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False)
+            await client.edit_message(
+                TARGET,
+                tgt_id,
+                cleaned_text,
+                link_preview=False,
+                formatting_entities=[]
+            )
             save_mapping(msg.id, tgt_id, cleaned_text)
-            
+
     except Exception as e:
         logging.error(f"Error: {e}")
 
 # --- HANDLERS ---
+
 @client.on(events.NewMessage(chats=SOURCE_CHATS))
-async def h1(event): await process_msg(event.message)
+async def new_handler(event):
+    await process_msg(event.message)
 
 @client.on(events.MessageEdited(chats=SOURCE_CHATS))
-async def h2(event): await process_msg(event.message)
+async def edit_handler(event):
+    await process_msg(event.message)
 
 @client.on(events.MessageDeleted())
 async def delete_handler(event):
     try:
         for msg_id in event.deleted_ids:
             tgt_id, _ = get_mapping(msg_id)
-            if tgt_id: await client.delete_messages(TARGET, tgt_id)
-    except: pass
+            if tgt_id:
+                await client.delete_messages(TARGET, tgt_id)
+    except:
+        pass
+
+# --- LIGHT POLL (Backup Sync) ---
 
 async def light_poll():
     while True:
@@ -115,11 +172,14 @@ async def light_poll():
                 async for msg in client.iter_messages(s_id, limit=5):
                     await process_msg(msg)
             await asyncio.sleep(15)
-        except: await asyncio.sleep(20)
+        except:
+            await asyncio.sleep(20)
+
+# --- MAIN ---
 
 async def main():
     await client.start()
-    logging.info(f"--- V54 METADATA-KILLER ONLINE (Testing: {IS_TESTING}) ---")
+    logging.info(f"--- V55 ULTRA CLEAN BOT ONLINE (Testing: {IS_TESTING}) ---")
     client.loop.create_task(light_poll())
     await client.run_until_disconnected()
 
