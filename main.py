@@ -45,17 +45,12 @@ def get_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- CLEANERS ---
-
-def break_links(text):
-    # Break http so Telegram can't detect links
-    return re.sub(r'http', 'h\u200Bttp', text)
-
+# --- CLEANER ---
 def metadata_killer_clean(text):
     if not text:
         return ""
 
-    # Remove Twitter/X/t.co links
+    # Remove Twitter/X links
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
 
     # Remove ALL URLs
@@ -63,37 +58,12 @@ def metadata_killer_clean(text):
 
     # Remove unwanted keywords
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
-        text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
+        text = re.sub(re.escape(word), "", text, flags=re.IGNORECASE)
 
-    # Break remaining links
-    text = break_links(text)
-
-    # Add invisible char
-    return text.strip() + "\u200C"
+    # Add invisible char to break any hidden parsing
+    return text.strip() + "\u2063"
 
 # --- MAIN PROCESS ---
-
-async def send_clean_message(cleaned_text, reply_to):
-    # Step 1: Send blank (nuclear anti-preview)
-    sent = await client.send_message(
-        TARGET,
-        "‎",
-        reply_to=reply_to,
-        link_preview=False,
-        formatting_entities=[]
-    )
-
-    # Step 2: Edit with clean text
-    await client.edit_message(
-        TARGET,
-        sent.id,
-        cleaned_text,
-        link_preview=False,
-        formatting_entities=[]
-    )
-
-    return sent
-
 async def process_msg(msg):
     try:
         if msg.date < START_TIME:
@@ -118,17 +88,36 @@ async def process_msg(msg):
                     caption=cleaned_text,
                     reply_to=reply_to,
                     link_preview=False,
-                    formatting_entities=[]
+                    parse_mode=None
                 )
 
                 if os.path.exists(path):
                     os.remove(path)
 
             else:
-                sent = await send_clean_message(cleaned_text, reply_to)
+                sent = await client.send_message(
+                    TARGET,
+                    cleaned_text,
+                    reply_to=reply_to,
+                    link_preview=False,
+                    parse_mode=None
+                )
 
             if sent:
                 save_mapping(msg.id, sent.id, cleaned_text)
+
+                # small safety edit (prevents rare preview glitch)
+                await asyncio.sleep(0.3)
+                try:
+                    await client.edit_message(
+                        TARGET,
+                        sent.id,
+                        cleaned_text,
+                        link_preview=False,
+                        parse_mode=None
+                    )
+                except:
+                    pass
 
         elif last_text != cleaned_text:
             await client.edit_message(
@@ -136,7 +125,7 @@ async def process_msg(msg):
                 tgt_id,
                 cleaned_text,
                 link_preview=False,
-                formatting_entities=[]
+                parse_mode=None
             )
             save_mapping(msg.id, tgt_id, cleaned_text)
 
@@ -144,7 +133,6 @@ async def process_msg(msg):
         logging.error(f"Error: {e}")
 
 # --- HANDLERS ---
-
 @client.on(events.NewMessage(chats=SOURCE_CHATS))
 async def new_handler(event):
     await process_msg(event.message)
@@ -163,8 +151,7 @@ async def delete_handler(event):
     except:
         pass
 
-# --- LIGHT POLL (Backup Sync) ---
-
+# --- BACKUP POLL ---
 async def light_poll():
     while True:
         try:
@@ -176,10 +163,9 @@ async def light_poll():
             await asyncio.sleep(20)
 
 # --- MAIN ---
-
 async def main():
     await client.start()
-    logging.info(f"--- V55 ULTRA CLEAN BOT ONLINE (Testing: {IS_TESTING}) ---")
+    logging.info(f"--- V56 STABLE BOT ONLINE (Testing: {IS_TESTING}) ---")
     client.loop.create_task(light_poll())
     await client.run_until_disconnected()
 
