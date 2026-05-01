@@ -3,25 +3,17 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 
-# --- CONFIG ---
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION = os.environ.get("SESSION_STRING")
 
-IS_TESTING = os.environ.get("TEST_MODE", "false").lower() == "true"
-
-if IS_TESTING:
-    SOURCE_CHATS = [int(i.strip()) for i in os.environ.get("SOURCE_TEST_ID", "").split(",") if i.strip()]
-    TARGET = int(os.environ.get("TARGET_TEST_ID", "0"))
-else:
-    SOURCE_CHATS = [int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]
-    TARGET = -1001752144165 
+SOURCE_CHATS = [int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]
+TARGET = -1001752144165 
 
 START_TIME = datetime.now(timezone.utc)
 
-# --- DB ---
 DB_FILE = "bot_data.db"
 
 def init_db():
@@ -43,52 +35,63 @@ def get_mapping(src_id):
     return res if res else (None, None)
 
 init_db()
+
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- CLEANER ---
-def metadata_killer_clean(text):
+# --- CLEAN TEXT ---
+def clean_text(text):
     if not text:
         return ""
 
-    # Remove Twitter/X links
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
-
-    # Remove ALL URLs
     text = re.sub(r'https?:\/\/\S+', '', text)
 
-    # Remove unwanted keywords
-    for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
-        text = re.sub(re.escape(word), "", text, flags=re.IGNORECASE)
-
-    # Add invisible char to break any hidden parsing
     return text.strip() + "\u2063"
 
-# --- MAIN PROCESS ---
+# --- REMOVE PREVIEW COMPLETELY ---
+def has_link(msg):
+    if msg.raw_text:
+        if re.search(r'https?:\/\/', msg.raw_text):
+            return True
+    if msg.entities:
+        return True
+    return False
+
+# --- MAIN ---
 async def process_msg(msg):
     try:
         if msg.date < START_TIME:
             return
 
         tgt_id, last_text = get_mapping(msg.id)
-        cleaned_text = metadata_killer_clean(msg.text)
+        text = clean_text(msg.text)
 
         if not tgt_id:
-            if not cleaned_text and not msg.media:
-                return
 
             reply_to = get_mapping(msg.reply_to_msg_id)[0] if msg.reply_to_msg_id else None
 
-            # --- MEDIA ---
-            if msg.media and any(ext in (msg.file.ext or "") for ext in ['.jpg', '.png', '.jpeg']):
+            # 🔥 CASE 1: MESSAGE WITH LINK → SEND ONLY TEXT (NO MEDIA)
+            if has_link(msg):
+                sent = await client.send_message(
+                    TARGET,
+                    text,
+                    reply_to=reply_to,
+                    link_preview=False,
+                    parse_mode=None
+                )
+
+            # 🔥 CASE 2: PURE MEDIA (NO LINK)
+            elif msg.media:
                 path = await client.download_media(msg)
 
                 sent = await client.send_file(
                     TARGET,
                     path,
-                    caption=cleaned_text,
+                    caption=text,
                     reply_to=reply_to,
                     link_preview=False,
-                    parse_mode=None
+                    parse_mode=None,
+                    force_document=True  # 🔥 KEY LINE
                 )
 
                 if os.path.exists(path):
@@ -97,40 +100,27 @@ async def process_msg(msg):
             else:
                 sent = await client.send_message(
                     TARGET,
-                    cleaned_text,
+                    text,
                     reply_to=reply_to,
                     link_preview=False,
                     parse_mode=None
                 )
 
             if sent:
-                save_mapping(msg.id, sent.id, cleaned_text)
+                save_mapping(msg.id, sent.id, text)
 
-                # small safety edit (prevents rare preview glitch)
-                await asyncio.sleep(0.3)
-                try:
-                    await client.edit_message(
-                        TARGET,
-                        sent.id,
-                        cleaned_text,
-                        link_preview=False,
-                        parse_mode=None
-                    )
-                except:
-                    pass
-
-        elif last_text != cleaned_text:
+        elif last_text != text:
             await client.edit_message(
                 TARGET,
                 tgt_id,
-                cleaned_text,
+                text,
                 link_preview=False,
                 parse_mode=None
             )
-            save_mapping(msg.id, tgt_id, cleaned_text)
+            save_mapping(msg.id, tgt_id, text)
 
     except Exception as e:
-        logging.error(f"Error: {e}")
+        logging.error(e)
 
 # --- HANDLERS ---
 @client.on(events.NewMessage(chats=SOURCE_CHATS))
@@ -151,22 +141,10 @@ async def delete_handler(event):
     except:
         pass
 
-# --- BACKUP POLL ---
-async def light_poll():
-    while True:
-        try:
-            for s_id in SOURCE_CHATS:
-                async for msg in client.iter_messages(s_id, limit=5):
-                    await process_msg(msg)
-            await asyncio.sleep(15)
-        except:
-            await asyncio.sleep(20)
-
 # --- MAIN ---
 async def main():
     await client.start()
-    logging.info(f"--- V56 STABLE BOT ONLINE (Testing: {IS_TESTING}) ---")
-    client.loop.create_task(light_poll())
+    print("🚀 BOT RUNNING (NO LOGO MODE)")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
