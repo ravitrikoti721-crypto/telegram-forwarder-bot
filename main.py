@@ -44,28 +44,38 @@ def get_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, connection_retries=None, auto_reconnect=True)
 
-# --- CLEANER ---
-def ultra_clean(text):
+# --- THE INVISIBLE SHIELD CLEANER ---
+def shield_clean(text):
     if not text: return ""
-    # Twitter/X/T.co links delete
+    
+    # 1. Sabse pehle Twitter/X/T.co links ko jadd se mitao
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
+    
+    # 2. Baki saare general links uda do
     text = re.sub(r'https?:\/\/\S+', '', text)
-    text = re.sub(r'@\S+', '', text)
+    
+    # 3. Hidden Character Injection (Invisible Shield)
+    # Hum text ke har word ke beech ek invisible character daal denge taaki Telegram media fetch na kar sake
+    if text:
+        text = text.replace(" ", "\u200B ") # Zero-width space adds a layer of protection
+    
+    # 4. Branding removal
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
+    
     return text.strip()
 
 async def process_msg(msg):
     try:
         if msg.date < START_TIME: return
         tgt_id, last_text = get_mapping(msg.id)
-        cleaned_text = ultra_clean(msg.text)
+        cleaned_text = shield_clean(msg.text)
 
         if not tgt_id:
             if not cleaned_text and not msg.media: return
             reply_to = get_mapping(msg.reply_to_msg_id)[0] if msg.reply_to_msg_id else None
             
-            # STEP 1: Send Message
+            # FORCE PREVIEW OFF + SEND
             if msg.media:
                 path = await client.download_media(msg)
                 sent = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
@@ -75,12 +85,10 @@ async def process_msg(msg):
             
             if sent:
                 save_mapping(msg.id, sent.id, cleaned_text)
-                # STEP 2: GHOST EDIT (The secret fix for Logo)
-                # Hum message bhejte hi usey turant edit karenge with NO PREVIEW
-                await asyncio.sleep(0.5) 
+                # DOUBLE KILL: Edit message immediately to ensure no preview
+                await asyncio.sleep(0.3)
                 try:
                     await client.edit_message(TARGET, sent.id, cleaned_text, link_preview=False)
-                    logging.info(f"👻 Ghost Edit Success: Logo Killed for {msg.id}")
                 except: pass
 
         elif last_text != cleaned_text:
@@ -116,7 +124,7 @@ async def light_poll():
 
 async def main():
     await client.start()
-    logging.info(f"--- V49 GHOST-EDIT MODE ONLINE ---")
+    logging.info(f"--- V50 INVISIBLE-SHIELD ONLINE (Testing: {IS_TESTING}) ---")
     client.loop.create_task(light_poll())
     await client.run_until_disconnected()
 
