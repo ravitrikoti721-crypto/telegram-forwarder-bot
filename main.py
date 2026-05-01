@@ -1,4 +1,4 @@
-import os, logging, asyncio, re, sqlite3
+import os, logging, asyncio, re, sqlite3, random, string
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from datetime import datetime, timezone
@@ -44,52 +44,50 @@ def get_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- THE ABSOLUTE CLEANER ---
-def absolute_clean(text):
+# --- THE METADATA KILLER ---
+def metadata_killer_clean(text):
     if not text: return ""
-    
-    # 1. Kill Twitter/X/T.co links
+    # 1. Hard Remove Twitter/X/T.co
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
-    
-    # 2. Kill all other links
+    # 2. Hard Remove all URLs
     text = re.sub(r'https?:\/\/\S+', '', text)
-    
-    # 3. Custom filters
+    # 3. Filter Keywords
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     
-    return text.strip()
+    # 4. Anti-Cache Injection: Adding an invisible char to break Telegram's link detection
+    return text.strip() + "\u200C"
 
 async def process_msg(msg):
     try:
         if msg.date < START_TIME: return
         tgt_id, last_text = get_mapping(msg.id)
-        cleaned_text = absolute_clean(msg.text)
+        cleaned_text = metadata_killer_clean(msg.text)
 
         if not tgt_id:
             if not cleaned_text and not msg.media: return
             reply_to = get_mapping(msg.reply_to_msg_id)[0] if msg.reply_to_msg_id else None
             
-            # STRATEGY: Send as clean text without ANY formatting/entities
-            # We use parse_mode=None to ensure Telegram doesn't auto-detect links
+            # --- THE NUCLEAR SEND ---
+            # We use 'silent=True' and forced 'link_preview=False'
             if msg.media and any(ext in (msg.file.ext or "") for ext in ['.jpg', '.png', '.jpeg']):
                 path = await client.download_media(msg)
-                sent = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False, parse_mode=None)
+                sent = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
                 if os.path.exists(path): os.remove(path)
             else:
-                # If it's a link-heavy message, we wrap it in a code block or send as raw text
-                sent = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False, parse_mode=None)
+                # IMPORTANT: Sending as a plain message with NO formatting at all
+                sent = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False, silent=True)
             
             if sent:
                 save_mapping(msg.id, sent.id, cleaned_text)
-                # FORCE EDIT to clear any hidden previews
-                await asyncio.sleep(0.5)
+                # DESTRUCTIVE EDIT: Immediately edit to remove any metadata Telegram might have grabbed
+                await asyncio.sleep(0.4)
                 try:
-                    await client.edit_message(TARGET, sent.id, cleaned_text, link_preview=False, parse_mode=None)
+                    await client.edit_message(TARGET, sent.id, cleaned_text, link_preview=False)
                 except: pass
 
         elif last_text != cleaned_text:
-            await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False, parse_mode=None)
+            await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False)
             save_mapping(msg.id, tgt_id, cleaned_text)
             
     except Exception as e:
@@ -121,7 +119,7 @@ async def light_poll():
 
 async def main():
     await client.start()
-    logging.info(f"--- V53 ENTITY-PURGE ONLINE ---")
+    logging.info(f"--- V54 METADATA-KILLER ONLINE (Testing: {IS_TESTING}) ---")
     client.loop.create_task(light_poll())
     await client.run_until_disconnected()
 
