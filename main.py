@@ -41,10 +41,10 @@ def delete_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, connection_retries=None, auto_reconnect=True)
 
-# --- STACK CLEANER (Strict Logo Removal) ---
-def final_clean(text):
+# --- THE CLEANER (Kill Links to Kill Logos) ---
+def strict_clean(text):
     if not text: return ""
-    # Sabse pehle Twitter links udao
+    # Sabse pehle Twitter/X links ko bilkul saaf karo
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com)\/\S+', '', text)
     text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
@@ -52,21 +52,20 @@ def final_clean(text):
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     return text.strip()
 
-# --- MIRROR ENGINE ---
+# --- MIRROR LOGIC ---
 async def process_msg(msg):
     try:
-        # Purane messages ko ignore karo (Flood Protection)
         if msg.date < START_TIME: return
-
+        
         tgt_id, last_text = get_mapping(msg.id)
-        cleaned_text = final_clean(msg.text)
+        cleaned_text = strict_clean(msg.text)
 
         if not tgt_id:
             if not cleaned_text and not msg.media: return
             
-            # Smart Tagging logic
             reply_to = None
             if msg.reply_to_msg_id:
+                # Purane trade ko dhoondhne ka logic
                 reply_to, _ = get_mapping(msg.reply_to_msg_id)
 
             if msg.media:
@@ -78,49 +77,47 @@ async def process_msg(msg):
             
             if sent:
                 save_mapping(msg.id, sent.id, cleaned_text)
-                logging.info(f"✅ Live: {msg.id}")
+                logging.info(f"✅ Live Mirror: {msg.id}")
 
         elif last_text != cleaned_text:
-            # Edit Sync
             await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False)
             save_mapping(msg.id, tgt_id, cleaned_text)
-            logging.info(f"✏️ Edited: {msg.id}")
-
+            logging.info(f"✏️ Edited Sync: {msg.id}")
     except Exception: pass
 
-# --- THE SYNC ENGINE (Fixed Delete Loop) ---
-async def global_sync():
+# --- EVENT HANDLERS (Safe Sync) ---
+@client.on(events.NewMessage(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
+async def h1(event): await process_msg(event.message)
+
+@client.on(events.MessageEdited(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
+async def h2(event): await process_msg(event.message)
+
+@client.on(events.MessageDeleted())
+async def delete_handler(event):
+    try:
+        for msg_id in event.deleted_ids:
+            tgt_id, _ = get_mapping(msg_id)
+            if tgt_id:
+                await client.delete_messages(TARGET, tgt_id)
+                delete_mapping(msg_id)
+                logging.info(f"🗑️ Delete Synced: {msg_id}")
+    except: pass
+
+# Polling sirf Edits/News ke liye (No Delete check here to avoid loop)
+async def light_poll():
     while True:
         try:
             s_ids = [int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]
             for s_id in s_ids:
-                # 1. Check for New & Edited
-                async for msg in client.iter_messages(s_id, limit=10):
+                async for msg in client.iter_messages(s_id, limit=5):
                     await process_msg(msg)
-
-                # 2. Check for Deleted (Mapping cleanup)
-                conn = sqlite3.connect(DB_FILE)
-                # Hum pichle 20 mappings check karenge active session mein
-                recorded = conn.execute("SELECT src_id, tgt_id FROM mapping ORDER BY src_id DESC LIMIT 20").fetchall()
-                conn.close()
-
-                for s_msg_id, t_msg_id in recorded:
-                    try:
-                        # Message exist karta hai ya nahi?
-                        res = await client.get_messages(s_id, ids=s_msg_id)
-                        if not res or isinstance(res, events.MessageDeleted) or res.id == 0:
-                            await client.delete_messages(TARGET, t_msg_id)
-                            delete_mapping(s_msg_id)
-                            logging.info(f"🗑️ Deleted Successfully: {s_msg_id}")
-                    except: pass
-            
-            await asyncio.sleep(12)
-        except: await asyncio.sleep(15)
+            await asyncio.sleep(15) 
+        except: await asyncio.sleep(20)
 
 async def main():
     await client.start()
-    logging.info("--- V45 STABLE SYNC ONLINE ---")
-    client.loop.create_task(global_sync())
+    logging.info("--- V46 ZERO-LOOP MODE ONLINE ---")
+    client.loop.create_task(light_poll())
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
