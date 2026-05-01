@@ -44,22 +44,15 @@ def get_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, connection_retries=None, auto_reconnect=True)
 
-# --- ULTRA CLEANER (Logo Killer v2) ---
+# --- CLEANER ---
 def ultra_clean(text):
     if not text: return ""
-    
-    # 1. Sabse pehle Twitter/X/T.co links ko jadd se mitao
-    # Isme humne t.co (short links) bhi add kiye hain kyunki logo wahan se bhi aata hai
+    # Twitter/X/T.co links delete
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
-    
-    # 2. Baki saare general links uda do
     text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
-    
-    # 3. Specific keyword filtering
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
-    
     return text.strip()
 
 async def process_msg(msg):
@@ -70,13 +63,11 @@ async def process_msg(msg):
 
         if not tgt_id:
             if not cleaned_text and not msg.media: return
-            
             reply_to = get_mapping(msg.reply_to_msg_id)[0] if msg.reply_to_msg_id else None
             
-            # FORCE DISABLE PREVIEWS
+            # STEP 1: Send Message
             if msg.media:
                 path = await client.download_media(msg)
-                # link_preview=False yahan sabse zaroori hai
                 sent = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
                 if os.path.exists(path): os.remove(path)
             else:
@@ -84,15 +75,20 @@ async def process_msg(msg):
             
             if sent:
                 save_mapping(msg.id, sent.id, cleaned_text)
-                logging.info(f"✅ Logo-Free Mirror: {msg.id}")
+                # STEP 2: GHOST EDIT (The secret fix for Logo)
+                # Hum message bhejte hi usey turant edit karenge with NO PREVIEW
+                await asyncio.sleep(0.5) 
+                try:
+                    await client.edit_message(TARGET, sent.id, cleaned_text, link_preview=False)
+                    logging.info(f"👻 Ghost Edit Success: Logo Killed for {msg.id}")
+                except: pass
 
         elif last_text != cleaned_text:
-            # Edit mein bhi preview block karna hai
             await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False)
             save_mapping(msg.id, tgt_id, cleaned_text)
             
     except Exception as e:
-        logging.error(f"Error in process_msg: {e}")
+        logging.error(f"Error: {e}")
 
 # --- HANDLERS ---
 @client.on(events.NewMessage(chats=SOURCE_CHATS))
@@ -106,9 +102,7 @@ async def delete_handler(event):
     try:
         for msg_id in event.deleted_ids:
             tgt_id, _ = get_mapping(msg_id)
-            if tgt_id:
-                await client.delete_messages(TARGET, tgt_id)
-                # DB se delete mat karo, sirf channel se uda do
+            if tgt_id: await client.delete_messages(TARGET, tgt_id)
     except: pass
 
 async def light_poll():
@@ -122,7 +116,7 @@ async def light_poll():
 
 async def main():
     await client.start()
-    logging.info(f"--- V48 ULTRA-RESTRICT ONLINE (Testing: {IS_TESTING}) ---")
+    logging.info(f"--- V49 GHOST-EDIT MODE ONLINE ---")
     client.loop.create_task(light_poll())
     await client.run_until_disconnected()
 
