@@ -2,7 +2,6 @@ import os, logging, asyncio, re, sqlite3
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from datetime import datetime, timezone
-from telethon.tl.types import MessageEntityUrl, MessageEntityTextUrl
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -45,21 +44,17 @@ def get_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- THE PARSER BLIND CLEANER ---
-def parser_blind_clean(text):
+# --- THE ABSOLUTE CLEANER ---
+def absolute_clean(text):
     if not text: return ""
     
-    # 1. Sabse pehle Twitter/X/T.co links ko mitao
+    # 1. Kill Twitter/X/T.co links
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
     
-    # 2. Baki links bhi udao
+    # 2. Kill all other links
     text = re.sub(r'https?:\/\/\S+', '', text)
     
-    # 3. Hidden Character Injection (Invisible Shield)
-    # Isse Telegram link ko clickable nahi samajh payega
-    text = text.replace(".", ".\u200B").replace("/", "/\u200B")
-    
-    # 4. Branding removal
+    # 3. Custom filters
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     
@@ -69,38 +64,32 @@ async def process_msg(msg):
     try:
         if msg.date < START_TIME: return
         tgt_id, last_text = get_mapping(msg.id)
-        cleaned_text = parser_blind_clean(msg.text)
-
-        # Hard Kill for Entities (Links)
-        entities = []
-        if msg.entities:
-            for ent in msg.entities:
-                if not isinstance(ent, (MessageEntityUrl, MessageEntityTextUrl)):
-                    entities.append(ent)
+        cleaned_text = absolute_clean(msg.text)
 
         if not tgt_id:
             if not cleaned_text and not msg.media: return
             reply_to = get_mapping(msg.reply_to_msg_id)[0] if msg.reply_to_msg_id else None
             
-            # THE KILLER STEP: link_preview=False is not enough, we send fresh text
+            # STRATEGY: Send as clean text without ANY formatting/entities
+            # We use parse_mode=None to ensure Telegram doesn't auto-detect links
             if msg.media and any(ext in (msg.file.ext or "") for ext in ['.jpg', '.png', '.jpeg']):
                 path = await client.download_media(msg)
-                sent = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
+                sent = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False, parse_mode=None)
                 if os.path.exists(path): os.remove(path)
             else:
-                # Text-only with forced preview disablement
-                sent = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False)
+                # If it's a link-heavy message, we wrap it in a code block or send as raw text
+                sent = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False, parse_mode=None)
             
             if sent:
                 save_mapping(msg.id, sent.id, cleaned_text)
-                # Final Edit to ensure no logo
+                # FORCE EDIT to clear any hidden previews
                 await asyncio.sleep(0.5)
                 try:
-                    await client.edit_message(TARGET, sent.id, cleaned_text, link_preview=False)
+                    await client.edit_message(TARGET, sent.id, cleaned_text, link_preview=False, parse_mode=None)
                 except: pass
 
         elif last_text != cleaned_text:
-            await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False)
+            await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False, parse_mode=None)
             save_mapping(msg.id, tgt_id, cleaned_text)
             
     except Exception as e:
@@ -132,7 +121,7 @@ async def light_poll():
 
 async def main():
     await client.start()
-    logging.info(f"--- V52 PARSER-BLIND ONLINE ---")
+    logging.info(f"--- V53 ENTITY-PURGE ONLINE ---")
     client.loop.create_task(light_poll())
     await client.run_until_disconnected()
 
