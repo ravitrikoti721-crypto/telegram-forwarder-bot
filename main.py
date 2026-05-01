@@ -5,22 +5,19 @@ from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- CONFIG (Environment Variables) ---
+# --- CONFIG ---
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION = os.environ.get("SESSION_STRING")
 
-# TESTING MODE (IDs change karne ke liye Env Vars use karein)
 IS_TESTING = os.environ.get("TEST_MODE", "false").lower() == "true"
 
 if IS_TESTING:
     SOURCE_CHATS = [int(i.strip()) for i in os.environ.get("SOURCE_TEST_ID", "").split(",") if i.strip()]
     TARGET = int(os.environ.get("TARGET_TEST_ID", "0"))
-    logging.info("🛠️ RUNNING IN TESTING MODE")
 else:
     SOURCE_CHATS = [int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]
     TARGET = -1001752144165 
-    logging.info("🚀 RUNNING IN PRODUCTION MODE")
 
 START_TIME = datetime.now(timezone.utc)
 
@@ -44,53 +41,60 @@ def get_mapping(src_id):
     conn.close()
     return res if res else (None, None)
 
-def delete_mapping(src_id):
-    conn = sqlite3.connect(DB_FILE)
-    conn.execute("DELETE FROM mapping WHERE src_id = ?", (src_id,))
-    conn.commit()
-    conn.close()
-
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, connection_retries=None, auto_reconnect=True)
 
-# --- THE LINK NUKER (No Twitter Link = No Logo) ---
-def nuker_clean(text):
+# --- ULTRA CLEANER (Logo Killer v2) ---
+def ultra_clean(text):
     if not text: return ""
-    # Twitter/X links ko message se bilkul hata do
-    text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com)\/\S+', '', text)
-    # Baaki links aur @usernames bhi saaf karo
+    
+    # 1. Sabse pehle Twitter/X/T.co links ko jadd se mitao
+    # Isme humne t.co (short links) bhi add kiye hain kyunki logo wahan se bhi aata hai
+    text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
+    
+    # 2. Baki saare general links uda do
     text = re.sub(r'https?:\/\/\S+', '', text)
     text = re.sub(r'@\S+', '', text)
-    # Custom filters
+    
+    # 3. Specific keyword filtering
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
+    
     return text.strip()
 
 async def process_msg(msg):
     try:
         if msg.date < START_TIME: return
         tgt_id, last_text = get_mapping(msg.id)
-        cleaned_text = nuker_clean(msg.text)
+        cleaned_text = ultra_clean(msg.text)
 
         if not tgt_id:
             if not cleaned_text and not msg.media: return
+            
             reply_to = get_mapping(msg.reply_to_msg_id)[0] if msg.reply_to_msg_id else None
             
+            # FORCE DISABLE PREVIEWS
             if msg.media:
                 path = await client.download_media(msg)
+                # link_preview=False yahan sabse zaroori hai
                 sent = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
                 if os.path.exists(path): os.remove(path)
             else:
                 sent = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False)
             
-            if sent: save_mapping(msg.id, sent.id, cleaned_text)
+            if sent:
+                save_mapping(msg.id, sent.id, cleaned_text)
+                logging.info(f"✅ Logo-Free Mirror: {msg.id}")
 
         elif last_text != cleaned_text:
+            # Edit mein bhi preview block karna hai
             await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False)
             save_mapping(msg.id, tgt_id, cleaned_text)
-    except Exception: pass
+            
+    except Exception as e:
+        logging.error(f"Error in process_msg: {e}")
 
-# --- EVENT HANDLERS ---
+# --- HANDLERS ---
 @client.on(events.NewMessage(chats=SOURCE_CHATS))
 async def h1(event): await process_msg(event.message)
 
@@ -104,7 +108,7 @@ async def delete_handler(event):
             tgt_id, _ = get_mapping(msg_id)
             if tgt_id:
                 await client.delete_messages(TARGET, tgt_id)
-                delete_mapping(msg_id)
+                # DB se delete mat karo, sirf channel se uda do
     except: pass
 
 async def light_poll():
@@ -118,7 +122,7 @@ async def light_poll():
 
 async def main():
     await client.start()
-    logging.info(f"--- V47 READY (Mode: {'TESTING' if IS_TESTING else 'PROD'}) ---")
+    logging.info(f"--- V48 ULTRA-RESTRICT ONLINE (Testing: {IS_TESTING}) ---")
     client.loop.create_task(light_poll())
     await client.run_until_disconnected()
 
