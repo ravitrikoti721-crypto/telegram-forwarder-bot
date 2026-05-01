@@ -1,6 +1,7 @@
 import os, logging, asyncio, re, sqlite3
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -9,6 +10,7 @@ API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION = os.environ.get("SESSION_STRING")
 TARGET = -1001752144165 
+START_TIME = datetime.now(timezone.utc)
 
 # --- DB SETUP ---
 DB_FILE = "bot_data.db"
@@ -42,42 +44,56 @@ def strict_clean(text):
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     return text.strip()
 
-# --- SMART PROCESSOR ---
+# --- DEEP SEARCH FOR OLD MESSAGES ---
+async def find_target_msg_id(source_reply_id):
+    # 1. Pehle database mein check karo
+    tgt_id, _ = get_mapping(source_reply_id)
+    if tgt_id: return tgt_id
+
+    # 2. Agar DB mein nahi mila (Purana Trade), toh channel mein search karo
+    try:
+        source_msg = await client.get_messages(None, ids=source_reply_id) # Source se message uthao
+        if source_msg and source_msg.text:
+            search_text = strict_clean(source_msg.text)[:50] # Pehle 50 chars se search karo
+            async for m in client.iter_messages(TARGET, limit=300): # Aapke channel mein pichle 300 msg dekho
+                if m.text and search_text in m.text:
+                    return m.id
+    except: pass
+    return None
+
 async def process_msg(msg):
     try:
+        if msg.date < START_TIME: return
+
         tgt_id, last_text = get_mapping(msg.id)
         cleaned_text = strict_clean(msg.text)
 
-        # 1. NEW MESSAGE or REPLY
+        if not cleaned_text and not msg.media: return
+
         if not tgt_id:
+            # Smart Reply Finder
             reply_to = None
             if msg.reply_to_msg_id:
-                # Purane trade ka ID dhundne ki koshish
-                reply_to = get_mapping(msg.reply_to_msg_id)[0]
-                # Agar mapping nahi mili (Purana Trade), toh context add kar denge
-                if not reply_to:
-                    cleaned_text = f"**Update on Previous Trade:**\n\n{cleaned_text}"
+                reply_to = await find_target_msg_id(msg.reply_to_msg_id)
 
             if msg.media:
                 path = await client.download_media(msg)
                 sent = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
                 if os.path.exists(path): os.remove(path)
             else:
-                if not cleaned_text: return
                 sent = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False)
             
             if sent:
                 save_mapping(msg.id, sent.id, cleaned_text)
-                logging.info(f"✅ Processed: {msg.id}")
+                logging.info(f"✅ Processed with Tagging: {msg.id}")
 
-        # 2. EDIT SYNC
         elif last_text != cleaned_text:
             await client.edit_message(TARGET, tgt_id, cleaned_text, link_preview=False)
             save_mapping(msg.id, tgt_id, cleaned_text)
-            logging.info(f"✏️ Edit Synced: {msg.id}")
 
     except Exception as e:
-        logging.error(f"Error: {e}")
+        if "Message ID is invalid" not in str(e):
+            logging.error(f"Error: {e}")
 
 # Handlers
 @client.on(events.NewMessage(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
@@ -86,20 +102,19 @@ async def h1(event): await process_msg(event.message)
 @client.on(events.MessageEdited(chats=[int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]))
 async def h2(event): await process_msg(event.message)
 
-# Fast Polling for Edits & Missed Replies
 async def sync_poll():
     while True:
         try:
             s_ids = [int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]
             for s_id in s_ids:
-                async for msg in client.iter_messages(s_id, limit=10):
+                async for msg in client.iter_messages(s_id, limit=5):
                     await process_msg(msg)
             await asyncio.sleep(10)
         except: await asyncio.sleep(15)
 
 async def main():
     await client.start()
-    logging.info("--- V40 SMART TAG & SYNC ONLINE ---")
+    logging.info("--- V43 DEEP-SEARCH TAGGING ONLINE ---")
     client.loop.create_task(sync_poll())
     await client.run_until_disconnected()
 
