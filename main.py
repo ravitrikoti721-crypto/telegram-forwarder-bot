@@ -44,48 +44,46 @@ def get_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH, connection_retries=None, auto_reconnect=True)
 
-# --- THE INVISIBLE SHIELD CLEANER ---
-def shield_clean(text):
+# --- THE LOGO KILLER CLEANER ---
+def final_nuclear_clean(text):
     if not text: return ""
-    
-    # 1. Sabse pehle Twitter/X/T.co links ko jadd se mitao
+    # 1. Sabse pehle Twitter/X/T.co links ko bilkul mitao
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
-    
-    # 2. Baki saare general links uda do
+    # 2. Baki saare links bhi udao
     text = re.sub(r'https?:\/\/\S+', '', text)
-    
-    # 3. Hidden Character Injection (Invisible Shield)
-    # Hum text ke har word ke beech ek invisible character daal denge taaki Telegram media fetch na kar sake
-    if text:
-        text = text.replace(" ", "\u200B ") # Zero-width space adds a layer of protection
-    
-    # 4. Branding removal
+    text = re.sub(r'@\S+', '', text)
+    # 3. Branding removal
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
-    
     return text.strip()
 
 async def process_msg(msg):
     try:
         if msg.date < START_TIME: return
         tgt_id, last_text = get_mapping(msg.id)
-        cleaned_text = shield_clean(msg.text)
+        cleaned_text = final_nuclear_clean(msg.text)
 
         if not tgt_id:
+            # Agar message sirf link tha (jo ab empty hai), toh ignore karo
             if not cleaned_text and not msg.media: return
+            
             reply_to = get_mapping(msg.reply_to_msg_id)[0] if msg.reply_to_msg_id else None
             
-            # FORCE PREVIEW OFF + SEND
-            if msg.media:
+            if msg.media and not any(ext in (msg.file.ext or "") for ext in ['.jpg', '.png', '.jpeg']):
+                # Agar koi unwanted media (jaise twitter preview object) hai, toh sirf text bhejo
+                sent = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False)
+            elif msg.media:
+                # Image/Photo hai toh bhej do
                 path = await client.download_media(msg)
                 sent = await client.send_file(TARGET, path, caption=cleaned_text, reply_to=reply_to, link_preview=False)
                 if os.path.exists(path): os.remove(path)
             else:
-                sent = await client.send_message(TARGET, cleaned_text, reply_to=reply_to, link_preview=False)
+                # NUCLEAR STEP: Message ko as a fresh text bhej rahe hain, no formatting injection
+                sent = await client.send_message(TARGET, str(cleaned_text), reply_to=reply_to, link_preview=False)
             
             if sent:
                 save_mapping(msg.id, sent.id, cleaned_text)
-                # DOUBLE KILL: Edit message immediately to ensure no preview
+                # Extra safety: Immediate edit to kill any residual preview
                 await asyncio.sleep(0.3)
                 try:
                     await client.edit_message(TARGET, sent.id, cleaned_text, link_preview=False)
@@ -124,7 +122,7 @@ async def light_poll():
 
 async def main():
     await client.start()
-    logging.info(f"--- V50 INVISIBLE-SHIELD ONLINE (Testing: {IS_TESTING}) ---")
+    logging.info(f"--- V51 NUCLEAR-TEXT-ONLY ONLINE ---")
     client.loop.create_task(light_poll())
     await client.run_until_disconnected()
 
