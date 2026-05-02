@@ -59,7 +59,9 @@ def clean_text(text):
     # Branding remove
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
-    return text.strip() + "\u2063"
+    
+    final = text.strip()
+    return final + "\u2063" if final else ""
 
 def has_link(msg):
     if msg.text and re.search(r'https?:\/\/', msg.text): return True
@@ -73,7 +75,9 @@ async def find_target_msg_id(source_reply_id):
     try:
         source_msg = await client.get_messages(None, ids=source_reply_id)
         if source_msg and source_msg.text:
-            search_text = clean_text(source_msg.text)[:50]
+            cleaned = clean_text(source_msg.text)
+            if not cleaned: return None
+            search_text = cleaned[:50]
             async for m in client.iter_messages(TARGET, limit=200):
                 if m.text and search_text in m.text: return m.id
     except: pass
@@ -87,17 +91,22 @@ async def process_msg(msg):
         text = clean_text(msg.text)
 
         if not tgt_id:
-            if not text and not msg.media: return
+            # 🔥 BLANK MESSAGE GUARD: Agar text khali hai aur media bhi nahi hai, toh MIRROR MAT KARO
+            if not text and not msg.media: 
+                logging.info(f"🚫 Skipped Empty/Link-Only message: {msg.id}")
+                return
+            
             reply_to = await find_target_msg_id(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
 
             # CASE 1: LINK DETECTED -> TEXT ONLY (To kill logo)
             if has_link(msg):
+                if not text: return # Safety if only link was present
                 sent = await client.send_message(TARGET, text, reply_to=reply_to, link_preview=False, parse_mode=None)
             
             # CASE 2: REAL MEDIA (No Link)
             elif msg.media:
                 path = await client.download_media(msg)
-                sent = await client.send_file(TARGET, path, caption=text, reply_to=reply_to, link_preview=False, parse_mode=None, force_document=False)
+                sent = await client.send_file(TARGET, path, caption=text, reply_to=reply_to, link_preview=False, parse_mode=None)
                 if os.path.exists(path): os.remove(path)
             
             # CASE 3: PLAIN TEXT
@@ -109,7 +118,7 @@ async def process_msg(msg):
                 logging.info(f"✅ Processed: {msg.id}")
 
         elif last_text != text:
-            # Edit Sync
+            if not text and not msg.media: return # Don't edit to blank
             await client.edit_message(TARGET, tgt_id, text, link_preview=False, parse_mode=None)
             save_mapping(msg.id, tgt_id, text)
             logging.info(f"✏️ Edited: {msg.id}")
@@ -135,19 +144,10 @@ async def delete_handler(event):
                 logging.info(f"🗑️ Deleted: {msg_id}")
     except: pass
 
-async def light_poll():
-    while True:
-        try:
-            for s_id in SOURCE_CHATS:
-                async for msg in client.iter_messages(s_id, limit=5):
-                    await process_msg(msg)
-            await asyncio.sleep(15)
-        except: await asyncio.sleep(20)
-
 async def main():
     await client.start()
-    logging.info(f"🚀 V55 RUNNING (Testing: {IS_TESTING})")
-    client.loop.create_task(light_poll())
+    logging.info(f"🚀 V56 LIVE (Testing: {IS_TESTING})")
+    # Note: Using events only for speed, poll removed to avoid loops
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
