@@ -20,9 +20,9 @@ else:
     TARGET = -1001752144165 
 
 START_TIME = datetime.now(timezone.utc)
-
-# --- DB SETUP ---
 DB_FILE = "bot_data.db"
+
+# --- DB & HELPER FUNCTIONS ---
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     conn.execute("CREATE TABLE IF NOT EXISTS mapping (src_id INTEGER PRIMARY KEY, tgt_id INTEGER, last_text TEXT)")
@@ -50,16 +50,12 @@ def delete_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- CLEANING & LOGO DETECTION ---
 def clean_text(text):
     if not text: return ""
-    # Twitter/X/T.co links remove
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
     text = re.sub(r'https?:\/\/\S+', '', text)
-    # Branding remove
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
-    
     final = text.strip()
     return final + "\u2063" if final else ""
 
@@ -68,7 +64,6 @@ def has_link(msg):
     if msg.entities: return True
     return False
 
-# --- DEEP SEARCH FOR OLD TAGS ---
 async def find_target_msg_id(source_reply_id):
     tgt_id, _ = get_mapping(source_reply_id)
     if tgt_id: return tgt_id
@@ -78,12 +73,12 @@ async def find_target_msg_id(source_reply_id):
             cleaned = clean_text(source_msg.text)
             if not cleaned: return None
             search_text = cleaned[:50]
-            async for m in client.iter_messages(TARGET, limit=200):
+            async for m in client.iter_messages(TARGET, limit=100):
                 if m.text and search_text in m.text: return m.id
     except: pass
     return None
 
-# --- CORE PROCESSOR ---
+# --- CORE MIRROR LOGIC ---
 async def process_msg(msg):
     try:
         if msg.date < START_TIME: return
@@ -91,47 +86,42 @@ async def process_msg(msg):
         text = clean_text(msg.text)
 
         if not tgt_id:
-            # 🔥 BLANK MESSAGE GUARD: Agar text khali hai aur media bhi nahi hai, toh MIRROR MAT KARO
-            if not text and not msg.media: 
-                logging.info(f"🚫 Skipped Empty/Link-Only message: {msg.id}")
-                return
-            
+            if not text and not msg.media: return
             reply_to = await find_target_msg_id(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
 
-            # CASE 1: LINK DETECTED -> TEXT ONLY (To kill logo)
+            # CASE 1: LINK/LOGO BLOCK
             if has_link(msg):
-                if not text: return # Safety if only link was present
+                if not text: return
                 sent = await client.send_message(TARGET, text, reply_to=reply_to, link_preview=False, parse_mode=None)
-            
-            # CASE 2: REAL MEDIA (No Link)
+            # CASE 2: MEDIA
             elif msg.media:
                 path = await client.download_media(msg)
                 sent = await client.send_file(TARGET, path, caption=text, reply_to=reply_to, link_preview=False, parse_mode=None)
                 if os.path.exists(path): os.remove(path)
-            
-            # CASE 3: PLAIN TEXT
+            # CASE 3: TEXT
             else:
                 sent = await client.send_message(TARGET, text, reply_to=reply_to, link_preview=False, parse_mode=None)
 
             if sent:
                 save_mapping(msg.id, sent.id, text)
-                logging.info(f"✅ Processed: {msg.id}")
+                logging.info(f"✅ Fast Mirror: {msg.id}")
 
         elif last_text != text:
-            if not text and not msg.media: return # Don't edit to blank
             await client.edit_message(TARGET, tgt_id, text, link_preview=False, parse_mode=None)
             save_mapping(msg.id, tgt_id, text)
-            logging.info(f"✏️ Edited: {msg.id}")
 
     except Exception as e:
         logging.error(f"Error: {e}")
 
-# --- HANDLERS ---
+# --- HANDLERS (Sequence Fix) ---
 @client.on(events.NewMessage(chats=SOURCE_CHATS))
-async def h1(event): await process_msg(event.message)
+async def h1(event):
+    # Live message ko priority do
+    await process_msg(event.message)
 
 @client.on(events.MessageEdited(chats=SOURCE_CHATS))
-async def h2(event): await process_msg(event.message)
+async def h2(event):
+    await process_msg(event.message)
 
 @client.on(events.MessageDeleted())
 async def delete_handler(event):
@@ -141,13 +131,24 @@ async def delete_handler(event):
             if tgt_id:
                 await client.delete_messages(TARGET, tgt_id)
                 delete_mapping(msg_id)
-                logging.info(f"🗑️ Deleted: {msg_id}")
     except: pass
+
+# --- SPEED SYNC (Ensures 1,2,3 order) ---
+async def speed_sync():
+    while True:
+        try:
+            for s_id in SOURCE_CHATS:
+                # Latest 10 messages uthao aur unhe OLDEST TO NEWEST sort karo
+                msgs = await client.get_messages(s_id, limit=10)
+                for msg in reversed(msgs): # Reverse ensures 1, 2, 3 sequence
+                    await process_msg(msg)
+            await asyncio.sleep(5) # Delay reduced to 5s for speed
+        except: await asyncio.sleep(10)
 
 async def main():
     await client.start()
-    logging.info(f"🚀 V56 LIVE (Testing: {IS_TESTING})")
-    # Note: Using events only for speed, poll removed to avoid loops
+    logging.info(f"🚀 V57 SEQUENCE-PRO ONLINE (Testing: {IS_TESTING})")
+    client.loop.create_task(speed_sync())
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
