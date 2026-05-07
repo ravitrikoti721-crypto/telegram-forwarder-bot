@@ -8,8 +8,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION = os.environ.get("SESSION_STRING")
-TARGET = -1001752144165 
-SOURCE_CHATS = [int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]
+
+# 🔥 FIX: Yahan switch logic sahi kiya hai
+IS_TESTING = os.environ.get("TEST_MODE", "false").lower() == "true"
+
+if IS_TESTING:
+    # Testing Mode: Use test IDs from Environment
+    SOURCE_CHATS = [int(i.strip()) for i in os.environ.get("SOURCE_TEST_ID", "").split(",") if i.strip()]
+    TARGET = int(os.environ.get("TARGET_TEST_ID", "0"))
+    logging.info("🛠️ RUNNING IN TEST MODE")
+else:
+    # Production Mode: Use real source and Market Precision ID
+    SOURCE_CHATS = [int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]
+    TARGET = -1001752144165 
+    logging.info("🚀 RUNNING IN PRODUCTION MODE")
 
 DB_FILE = "bot_data.db"
 
@@ -37,7 +49,6 @@ client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 def clean_text(text):
     if not text: return ""
     lines = text.split('\n')
-    # Hare Krishna cleaner
     cleaned_lines = [line for line in lines if "Hare Krishna" not in line]
     text = '\n'.join(cleaned_lines)
     text = re.sub(r'@\S+', '', text)
@@ -45,7 +56,7 @@ def clean_text(text):
 
 def is_blocked(msg):
     text = (msg.text or "").lower()
-    # Twitter/X/Logo Restriction (Regex logic)
+    # Twitter/X Patterns
     if re.search(r'(twitter\.com|x\.com|t\.co)', text): return True
     # Ad Blocker
     if any(kw in text for kw in ["kapil verma", "sg cash", "excellent stock"]): return True
@@ -53,7 +64,9 @@ def is_blocked(msg):
 
 async def process_msg(msg):
     try:
-        # Time filter removed so your tests work instantly
+        # Check if the message is from our allowed sources
+        if msg.chat_id not in SOURCE_CHATS: return
+        
         if is_blocked(msg): return
 
         tgt_id, last_text = get_mapping(msg.id)
@@ -87,7 +100,8 @@ async def h2(event): await process_msg(event.message)
 
 async def main():
     await client.start()
-    logging.info("🚀 V74 DIRECT-MIRROR ONLINE")
+    mode_text = "TESTING" if IS_TESTING else "PRODUCTION"
+    logging.info(f"✅ Bot started in {mode_text} mode on Target: {TARGET}")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
