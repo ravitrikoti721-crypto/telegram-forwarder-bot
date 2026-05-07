@@ -41,118 +41,83 @@ def get_mapping(src_id):
     conn.close()
     return res if res else (None, None)
 
-def delete_mapping(src_id):
-    conn = sqlite3.connect(DB_FILE)
-    conn.execute("DELETE FROM mapping WHERE src_id = ?", (src_id,))
-    conn.commit()
-    conn.close()
-
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- CLEANING LOGIC ---
+# --- ADVANCED BLOCKING LOGIC ---
+def is_blocked_content(msg):
+    # Agar message text ya caption mein ye keywords hain toh block kar do
+    text = (msg.text or "").lower()
+    block_keywords = ["kapil verma", "sebi registered", "sg cash", "training group", "premium group"]
+    
+    for kw in block_keywords:
+        if kw in text:
+            return True
+    return False
+
 def clean_text(text):
     if not text: return ""
     
-    # 1. Line Killer for signatures
+    # 1. Line Killer for "Hare Krishna"
     lines = text.split('\n')
     cleaned_lines = [line for line in lines if "Hare Krishna" not in line]
     text = '\n'.join(cleaned_lines)
     
-    # 2. Remove Twitter/X/URLs
-    text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
+    # 2. Cleanup URLs & Usernames
     text = re.sub(r'https?:\/\/\S+', '', text)
-    
-    # 3. Remove Usernames (@)
     text = re.sub(r'@\S+', '', text)
     
-    # 4. Filter specific names
+    # 3. Final Name Filter (Double safety)
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     
     final = text.strip()
     return final + "\u2063" if final else ""
 
-def has_restricted_content(msg):
-    if msg.text and re.search(r'https?:\/\/', msg.text): return True
-    if msg.text and re.search(r'@\S+', msg.text): return True
-    if msg.entities: return True
-    return False
-
-async def find_target_msg_id(source_reply_id):
-    tgt_id, _ = get_mapping(source_reply_id)
-    if tgt_id: return tgt_id
-    try:
-        source_msg = await client.get_messages(None, ids=source_reply_id)
-        if source_msg and source_msg.text:
-            cleaned = clean_text(source_msg.text)
-            if not cleaned: return None
-            search_text = cleaned[:50]
-            async for m in client.iter_messages(TARGET, limit=100):
-                if m.text and search_text in m.text: return m.id
-    except: pass
-    return None
-
+# --- MIRROR ENGINE ---
 async def process_msg(msg):
     try:
         if msg.date < START_TIME: return
+        
+        # 🔥 Step 1: Check for Blocked Content (SG Cash etc.)
+        if is_blocked_content(msg):
+            logging.info(f"🚫 Blocked SG/SEBI Promo: {msg.id}")
+            return
+
         tgt_id, last_text = get_mapping(msg.id)
         text = clean_text(msg.text)
 
         if not tgt_id:
             if not text and not msg.media: return
-            reply_to = await find_target_msg_id(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
-
-            if has_restricted_content(msg):
-                if not text: return
-                sent = await client.send_message(TARGET, text, reply_to=reply_to, link_preview=False, parse_mode=None)
-            elif msg.media:
+            
+            # Media Handling
+            if msg.media:
                 path = await client.download_media(msg)
-                sent = await client.send_file(TARGET, path, caption=text, reply_to=reply_to, link_preview=False, parse_mode=None)
+                sent = await client.send_file(TARGET, path, caption=text, link_preview=False)
                 if os.path.exists(path): os.remove(path)
             else:
-                sent = await client.send_message(TARGET, text, reply_to=reply_to, link_preview=False, parse_mode=None)
+                sent = await client.send_message(TARGET, text, link_preview=False)
 
             if sent:
                 save_mapping(msg.id, sent.id, text)
 
         elif last_text != text:
-            await client.edit_message(TARGET, tgt_id, text, link_preview=False, parse_mode=None)
+            await client.edit_message(TARGET, tgt_id, text, link_preview=False)
             save_mapping(msg.id, tgt_id, text)
 
     except Exception as e:
         logging.error(f"Error: {e}")
 
+# --- HANDLERS ---
 @client.on(events.NewMessage(chats=SOURCE_CHATS))
 async def h1(event): await process_msg(event.message)
 
 @client.on(events.MessageEdited(chats=SOURCE_CHATS))
 async def h2(event): await process_msg(event.message)
 
-@client.on(events.MessageDeleted())
-async def delete_handler(event):
-    try:
-        for msg_id in event.deleted_ids:
-            tgt_id, _ = get_mapping(msg_id)
-            if tgt_id:
-                await client.delete_messages(TARGET, tgt_id)
-                delete_mapping(msg_id)
-    except: pass
-
-async def speed_sync():
-    while True:
-        try:
-            for s_id in SOURCE_CHATS:
-                msgs = await client.get_messages(s_id, limit=10)
-                for msg in reversed(msgs):
-                    await process_msg(msg)
-            await asyncio.sleep(5)
-        except: await asyncio.sleep(10)
-
 async def main():
     await client.start()
-    logging.info(f"🚀 V65 ONLINE - TESTING: {IS_TESTING}")
-    client.loop.create_task(speed_sync())
+    logging.info("🚀 V66 SG-BLOCKER ACTIVE")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
