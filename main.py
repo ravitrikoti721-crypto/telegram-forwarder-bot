@@ -50,11 +50,11 @@ def delete_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- CLEANING LOGIC (Updated with Line Killer) ---
+# --- CLEANING LOGIC ---
 def clean_text(text):
     if not text: return ""
     
-    # 1. First, split into lines and remove any line containing "Hare Krishna"
+    # 1. Line Killer for signatures
     lines = text.split('\n')
     cleaned_lines = [line for line in lines if "Hare Krishna" not in line]
     text = '\n'.join(cleaned_lines)
@@ -63,7 +63,7 @@ def clean_text(text):
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
     text = re.sub(r'https?:\/\/\S+', '', text)
     
-    # 3. Remove Usernames (@SG005 etc)
+    # 3. Remove Usernames (@)
     text = re.sub(r'@\S+', '', text)
     
     # 4. Filter specific names
@@ -71,10 +71,8 @@ def clean_text(text):
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     
     final = text.strip()
-    # Adding invisible character to preserve formatting
     return final + "\u2063" if final else ""
 
-# --- UPDATED LINK DETECTION ---
 def has_restricted_content(msg):
     if msg.text and re.search(r'https?:\/\/', msg.text): return True
     if msg.text and re.search(r'@\S+', msg.text): return True
@@ -95,7 +93,6 @@ async def find_target_msg_id(source_reply_id):
     except: pass
     return None
 
-# --- MIRROR ENGINE ---
 async def process_msg(msg):
     try:
         if msg.date < START_TIME: return
@@ -126,7 +123,6 @@ async def process_msg(msg):
     except Exception as e:
         logging.error(f"Error: {e}")
 
-# --- EVENT HANDLERS ---
 @client.on(events.NewMessage(chats=SOURCE_CHATS))
 async def h1(event): await process_msg(event.message)
 
@@ -143,7 +139,6 @@ async def delete_handler(event):
                 delete_mapping(msg_id)
     except: pass
 
-# --- SEQUENCE SYNC ---
 async def speed_sync():
     while True:
         try:
@@ -156,6 +151,9 @@ async def speed_sync():
 
 async def main():
     await client.start()
-    logging.info(f"🚀 V64 PRECISE-CLEAN ONLINE")
+    logging.info(f"🚀 V65 ONLINE - TESTING: {IS_TESTING}")
     client.loop.create_task(speed_sync())
-    await
+    await client.run_until_disconnected()
+
+if __name__ == '__main__':
+    asyncio.run(main())
