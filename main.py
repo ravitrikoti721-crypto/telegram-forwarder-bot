@@ -50,28 +50,34 @@ def delete_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- CLEANING LOGIC (With Username Removal) ---
+# --- CLEANING LOGIC (Updated with Line Killer) ---
 def clean_text(text):
     if not text: return ""
-    # 1. Remove Twitter/X/URLs
+    
+    # 1. First, split into lines and remove any line containing "Hare Krishna"
+    lines = text.split('\n')
+    cleaned_lines = [line for line in lines if "Hare Krishna" not in line]
+    text = '\n'.join(cleaned_lines)
+    
+    # 2. Remove Twitter/X/URLs
     text = re.sub(r'https?:\/\/(www\.)?(twitter\.com|x\.com|t\.co)\/\S+', '', text)
     text = re.sub(r'https?:\/\/\S+', '', text)
-    # 2. Remove Usernames (@SG005 etc)
+    
+    # 3. Remove Usernames (@SG005 etc)
     text = re.sub(r'@\S+', '', text)
-    # 3. Filter specific names
+    
+    # 4. Filter specific names
     for word in ["Kapil Verma", "Stock Gainers", "SEBI Registered", "Sunil", "Stock Precision"]:
         text = re.compile(re.escape(word), re.IGNORECASE).sub("", text)
     
     final = text.strip()
+    # Adding invisible character to preserve formatting
     return final + "\u2063" if final else ""
 
-# --- UPDATED LINK DETECTION (Includes Usernames) ---
+# --- UPDATED LINK DETECTION ---
 def has_restricted_content(msg):
-    # Check for HTTP links
     if msg.text and re.search(r'https?:\/\/', msg.text): return True
-    # Check for Usernames (@)
     if msg.text and re.search(r'@\S+', msg.text): return True
-    # Check for Telegram Entities (Links, Usernames, etc.)
     if msg.entities: return True
     return False
 
@@ -100,7 +106,6 @@ async def process_msg(msg):
             if not text and not msg.media: return
             reply_to = await find_target_msg_id(msg.reply_to_msg_id) if msg.reply_to_msg_id else None
 
-            # 🔥 UPDATED: If message has link OR @username -> Block Media/Logo
             if has_restricted_content(msg):
                 if not text: return
                 sent = await client.send_message(TARGET, text, reply_to=reply_to, link_preview=False, parse_mode=None)
@@ -151,9 +156,6 @@ async def speed_sync():
 
 async def main():
     await client.start()
-    logging.info(f"🚀 V58 TOTAL-RESTRICT ONLINE")
+    logging.info(f"🚀 V64 PRECISE-CLEAN ONLINE")
     client.loop.create_task(speed_sync())
-    await client.run_until_disconnected()
-
-if __name__ == '__main__':
-    asyncio.run(main())
+    await
