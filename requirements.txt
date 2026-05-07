@@ -1,4 +1,2 @@
 telethon
-easyocr
-opencv-python-headless
 numpy
