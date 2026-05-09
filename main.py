@@ -15,11 +15,11 @@ IS_TESTING = os.environ.get("TEST_MODE", "false").lower() == "true"
 if IS_TESTING:
     SOURCE_CHATS = [int(i.strip()) for i in os.environ.get("SOURCE_TEST_ID", "").split(",") if i.strip()]
     TARGET = int(os.environ.get("TARGET_TEST_ID", "0"))
-    logging.info("🛠️ MODE: TESTING")
+    logging.info("🛠️ MODE: TESTING ACTIVE")
 else:
     SOURCE_CHATS = [int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]
     TARGET = -1001752144165 
-    logging.info("🚀 MODE: PRODUCTION")
+    logging.info("🚀 MODE: PRODUCTION ACTIVE")
 
 DB_FILE = "bot_data.db"
 
@@ -31,6 +31,7 @@ def init_db():
 
 def save_mapping(src_id, tgt_id, text):
     conn = sqlite3.connect(DB_FILE)
+    # INSERT OR REPLACE purane data ko delete nahi hone dega
     conn.execute("INSERT OR REPLACE INTO mapping VALUES (?, ?, ?)", (src_id, tgt_id, text))
     conn.commit()
     conn.close()
@@ -50,22 +51,31 @@ def delete_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- ADVANCED BLOCKING LOGIC ---
+# --- SMART BLOCKING LOGIC ---
 def is_blocked(msg):
     text = (msg.text or "").lower()
     
-    # 1. Promo & Link Keywords (YouTube, WhatsApp, Payment, TinyURL)
-    promo_patterns = r'(twitter\.com|x\.com|t\.co|youtube\.com|youtu\.be|tinyurl\.com|wa\.me|\+91)'
-    if re.search(promo_patterns, text): return True
+    # 1. YouTube & Shortener Links (Fix for openinapp, tinyurl, etc.)
+    video_promo_patterns = r'(twitter\.com|x\.com|t\.co|youtube\.com|youtu\.be|openinapp\.co|tinyurl\.com|bit\.ly|wa\.me|\+91)'
+    if re.search(video_promo_patterns, text): 
+        logging.info(f"🚫 Blocked Link/Promo: {msg.id}")
+        return True
     
-    # 2. Advisory & Sales Keywords
-    sales_kws = ["advisory", "discount", "offer", "link to join", "limited seats", "premium group", "kapil verma", "sg cash"]
-    if any(kw in text for kw in sales_kws): return True
+    # 2. Video & Advisory Keywords
+    video_kws = [
+        "watch here", "video live", "charts of the week", "what you’ll learn", 
+        "advisory", "discount", "offer", "limited seats", "premium group", 
+        "kapil verma", "sg cash", "excellent stock"
+    ]
+    if any(kw in text for kw in video_kws):
+        return True
     
-    # 3. Forward Header Block (For SG/Kapil Images)
+    # 3. Forward Header Block (For images without text captions)
     if msg.forward and msg.forward.chat:
         fwd_title = (msg.forward.chat.title or "").lower()
-        if any(x in fwd_title for x in ["sg cash", "sebi", "kapil", "stock gainers"]): return True
+        if any(x in fwd_title for x in ["sg cash", "sebi", "kapil", "stock gainers"]):
+            logging.info(f"🚫 Blocked SG/SEBI Forward: {fwd_title}")
+            return True
             
     return False
 
@@ -87,7 +97,7 @@ async def process_msg(msg):
         tgt_id, last_text = get_mapping(msg.id)
         text = clean_text(msg.text)
 
-        # Tagging logic
+        # Tagging / Reply Logic
         reply_to = None
         if msg.reply_to_msg_id:
             reply_to, _ = get_mapping(msg.reply_to_msg_id)
@@ -110,7 +120,7 @@ async def process_msg(msg):
             save_mapping(msg.id, tgt_id, text)
 
     except Exception as e:
-        logging.error(f"Error: {e}")
+        logging.error(f"Mirroring Error: {e}")
 
 @client.on(events.NewMessage(chats=SOURCE_CHATS))
 async def h1(event): await process_msg(event.message)
@@ -130,7 +140,7 @@ async def delete_handler(event):
 
 async def main():
     await client.start()
-    logging.info("🚀 V77 ULTIMATE STABILITY ONLINE")
+    logging.info("🚀 V78 FINAL STABLE ONLINE")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
