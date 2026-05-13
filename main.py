@@ -18,7 +18,7 @@ else:
     TARGET = -1001752144165 
 
 DB_FILE = "bot_data.db"
-recent_processed = {} # Sirf New Messages ke liye
+recent_processed = {}
 
 # --- DB FUNCTIONS ---
 def init_db():
@@ -63,7 +63,7 @@ def delete_mapping(src_id):
 init_db()
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- CLEANING & BLOCKING ---
+# --- SMART CLEANING ---
 def clean_text(text):
     if not text: return ""
     lines = text.split('\n')
@@ -72,13 +72,19 @@ def clean_text(text):
     text = re.sub(r'@\S+', '', '\n'.join(cleaned))
     return text.strip() + "\u2063" if text.strip() else ""
 
+# --- UPDATED BLOCKING (Hidden Link Proof) ---
 def is_blocked(msg):
-    text = (msg.text or "").lower()
+    # Agar ye kisi blocked message ka reply hai toh block karo
     if msg.reply_to_msg_id and is_parent_blocked(msg.reply_to_msg_id): return True
+    
+    # 🎯 FIX: Sirf visible text links scan karega, hidden/formatted links ko aane dega
+    text = (msg.text or "").lower()
     promo_patterns = r'(twitter\.com|x\.com|t\.co|youtube\.com|youtu\.be|openinapp\.co|tinyurl\.com|bit\.ly|wa\.me|\+91)'
     if re.search(promo_patterns, text): return True
+    
     promo_kws = ["advisory", "limited seats", "kapil verma", "sg cash", "discount offer"]
     if any(kw in text for kw in promo_kws): return True
+    
     if msg.forward and msg.forward.chat:
         fwd_title = (msg.forward.chat.title or "").lower()
         if any(x in fwd_title for x in ["sg cash", "sebi", "kapil"]): return True
@@ -89,8 +95,11 @@ async def process_msg(msg, is_edit=False):
     try:
         if msg.chat_id not in SOURCE_CHATS: return
         
-        # 🔥 Duplicate check sirf New Messages par lagega, Edits par nahi
-        if not is_edit:
+        # Check database first to prevent duplicates
+        tgt_id, last_text = get_mapping(msg.id)
+
+        # Duplicate check for New Messages only
+        if not is_edit and not tgt_id:
             msg_key = f"{msg.chat_id}_{msg.id}"
             if msg_key in recent_processed and (time.time() - recent_processed[msg_key]) < 5: return
             recent_processed[msg_key] = time.time()
@@ -99,13 +108,12 @@ async def process_msg(msg, is_edit=False):
             save_blocked(msg.id)
             return
 
-        tgt_id, last_text = get_mapping(msg.id)
         text = clean_text(msg.text)
-
         reply_to = None
         if msg.reply_to_msg_id:
             reply_to, _ = get_mapping(msg.reply_to_msg_id)
 
+        # 🎯 Logic: Agar ID nahi hai toh Naya Message, warna Edit
         if not tgt_id:
             if not text and not msg.media: return
             if msg.media:
@@ -116,10 +124,13 @@ async def process_msg(msg, is_edit=False):
                 sent = await client.send_message(TARGET, text, link_preview=False, reply_to=reply_to)
             if sent: save_mapping(msg.id, sent.id, text)
         
-        # 🔥 Edit Logic: Sync changes instantly
         elif last_text != text:
-            await client.edit_message(TARGET, tgt_id, text, link_preview=False)
-            save_mapping(msg.id, tgt_id, text)
+            # HAMESHA edit karega agar database mein ID mil gayi
+            try:
+                await client.edit_message(TARGET, tgt_id, text, link_preview=False)
+                save_mapping(msg.id, tgt_id, text)
+            except Exception as e:
+                logging.error(f"Edit Failed: {e}")
 
     except Exception as e:
         logging.error(f"Error: {e}")
@@ -142,7 +153,7 @@ async def delete_handler(event):
 
 async def main():
     await client.start()
-    logging.info("🚀 V83 STABLE-EDIT ONLINE")
+    logging.info("🚀 V84 STABLE - Hidden Links & Double Mirror Fixed")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
