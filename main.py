@@ -16,7 +16,7 @@ if IS_TESTING:
     TARGET = int(os.environ.get("TARGET_TEST_ID", "0"))
 else:
     SOURCE_CHATS = [int(i.strip()) for i in os.getenv("SOURCE_PUBLIC_ID", "").split(",") if i.strip()]
-    TARGET = -1001752144165 
+    TARGET = -1001752144165
 
 DB_FILE = "bot_data.db"
 recent_processed = {}
@@ -24,51 +24,109 @@ recent_processed = {}
 # --- DB FUNCTIONS ---
 def init_db():
     conn = sqlite3.connect(DB_FILE)
-    conn.execute("CREATE TABLE IF NOT EXISTS mapping (src_id INTEGER PRIMARY KEY, tgt_id INTEGER, last_text TEXT)")
-    conn.execute("CREATE TABLE IF NOT EXISTS blocked_msgs (src_id INTEGER PRIMARY KEY)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mapping (
+            src_id INTEGER PRIMARY KEY,
+            tgt_id INTEGER,
+            last_text TEXT
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS blocked_msgs (
+            src_id INTEGER PRIMARY KEY
+        )
+    """)
+
+    # Faster old reply lookups
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_mapping_src_id
+        ON mapping(src_id)
+    """)
+
     conn.commit()
     conn.close()
 
 def save_mapping(src_id, tgt_id, text):
     conn = sqlite3.connect(DB_FILE)
-    conn.execute("INSERT OR REPLACE INTO mapping VALUES (?, ?, ?)", (src_id, tgt_id, text))
+
+    conn.execute(
+        "INSERT OR REPLACE INTO mapping VALUES (?, ?, ?)",
+        (src_id, tgt_id, text)
+    )
+
     conn.commit()
     conn.close()
 
 def save_blocked(src_id):
     conn = sqlite3.connect(DB_FILE)
-    conn.execute("INSERT OR REPLACE INTO blocked_msgs VALUES (?)", (src_id,))
+
+    conn.execute(
+        "INSERT OR REPLACE INTO blocked_msgs VALUES (?)",
+        (src_id,)
+    )
+
     conn.commit()
     conn.close()
 
 def is_parent_blocked(src_id):
+
     if not src_id:
         return False
 
     conn = sqlite3.connect(DB_FILE)
-    res = conn.execute("SELECT src_id FROM blocked_msgs WHERE src_id = ?", (src_id,)).fetchone()
+
+    res = conn.execute(
+        "SELECT src_id FROM blocked_msgs WHERE src_id = ?",
+        (src_id,)
+    ).fetchone()
+
     conn.close()
 
     return True if res else False
 
 def get_mapping(src_id):
+
     conn = sqlite3.connect(DB_FILE)
-    res = conn.execute("SELECT tgt_id, last_text FROM mapping WHERE src_id = ?", (src_id,)).fetchone()
+
+    res = conn.execute(
+        "SELECT tgt_id, last_text FROM mapping WHERE src_id = ?",
+        (src_id,)
+    ).fetchone()
+
     conn.close()
+
     return res if res else (None, None)
 
 def delete_mapping(src_id):
+
     conn = sqlite3.connect(DB_FILE)
-    conn.execute("DELETE FROM mapping WHERE src_id = ?", (src_id,))
-    conn.execute("DELETE FROM blocked_msgs WHERE src_id = ?", (src_id,))
+
+    conn.execute(
+        "DELETE FROM mapping WHERE src_id = ?",
+        (src_id,)
+    )
+
+    conn.execute(
+        "DELETE FROM blocked_msgs WHERE src_id = ?",
+        (src_id,)
+    )
+
     conn.commit()
     conn.close()
 
 init_db()
-client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
+
+client = TelegramClient(
+    StringSession(SESSION),
+    API_ID,
+    API_HASH
+)
 
 # --- REMOVE ONLY BLOCKED HIDDEN LINKS ---
 def remove_hidden_links(msg):
+
     text = msg.text or ""
 
     if not msg.entities:
@@ -97,7 +155,7 @@ def remove_hidden_links(msg):
 
             url = (entity.url or "").lower()
 
-            # If blocked domain found, keep visible text only
+            # Ignore hidden blocked links
             if any(domain in url for domain in blocked_domains):
                 continue
 
@@ -105,6 +163,7 @@ def remove_hidden_links(msg):
 
 # --- SMART CLEANING ---
 def clean_text(text):
+
     if not text:
         return ""
 
@@ -127,16 +186,15 @@ def clean_text(text):
 
     return text.strip() + "\u2063" if text.strip() else ""
 
-# --- UPDATED BLOCKING ---
+# --- BLOCKING SYSTEM ---
 def is_blocked(msg):
 
-    # Block replies to blocked messages
+    # Replies to blocked messages
     if msg.reply_to_msg_id and is_parent_blocked(msg.reply_to_msg_id):
         return True
 
     text = (msg.text or "").lower()
 
-    # Only visible text links
     promo_patterns = r'(twitter\.com|x\.com|t\.co|youtube\.com|youtu\.be|openinapp\.co|tinyurl\.com|bit\.ly|wa\.me|\+91)'
 
     if re.search(promo_patterns, text):
@@ -163,7 +221,7 @@ def is_blocked(msg):
 
     return False
 
-# --- MIRROR ENGINE ---
+# --- MAIN MIRROR ENGINE ---
 async def process_msg(msg, is_edit=False):
 
     try:
@@ -178,7 +236,10 @@ async def process_msg(msg, is_edit=False):
 
             msg_key = f"{msg.chat_id}_{msg.id}"
 
-            if msg_key in recent_processed and (time.time() - recent_processed[msg_key]) < 5:
+            if (
+                msg_key in recent_processed and
+                (time.time() - recent_processed[msg_key]) < 5
+            ):
                 return
 
             recent_processed[msg_key] = time.time()
@@ -188,23 +249,41 @@ async def process_msg(msg, is_edit=False):
             save_blocked(msg.id)
             return
 
-        # NEW: remove only hidden blocked links
+        # Remove hidden blocked links only
         raw_text = remove_hidden_links(msg)
 
         # Existing cleaning
         text = clean_text(raw_text)
 
+        # --- REPLY MAPPING FIX ---
         reply_to = None
 
         if msg.reply_to_msg_id:
-            reply_to, _ = get_mapping(msg.reply_to_msg_id)
 
-        # New message
+            try:
+
+                mapped_reply, _ = get_mapping(msg.reply_to_msg_id)
+
+                # Old mirrored message found
+                if mapped_reply:
+                    reply_to = mapped_reply
+
+                # Mapping missing
+                else:
+                    logging.warning(
+                        f"⚠️ Old reply mapping not found for source msg: {msg.reply_to_msg_id}"
+                    )
+
+            except Exception as e:
+                logging.error(f"Reply Mapping Error: {e}")
+
+        # --- NEW MESSAGE ---
         if not tgt_id:
 
             if not text and not msg.media:
                 return
 
+            # MEDIA MESSAGE
             if msg.media:
 
                 path = await client.download_media(msg)
@@ -220,6 +299,7 @@ async def process_msg(msg, is_edit=False):
                 if os.path.exists(path):
                     os.remove(path)
 
+            # TEXT MESSAGE
             else:
 
                 sent = await client.send_message(
@@ -233,7 +313,7 @@ async def process_msg(msg, is_edit=False):
             if sent:
                 save_mapping(msg.id, sent.id, text)
 
-        # Edit existing message
+        # --- EDIT EXISTING ---
         elif last_text != text:
 
             try:
@@ -273,7 +353,12 @@ async def delete_handler(event):
         if tgt_id:
 
             try:
-                await client.delete_messages(TARGET, tgt_id)
+
+                await client.delete_messages(
+                    TARGET,
+                    tgt_id
+                )
+
                 delete_mapping(msg_id)
 
             except:
@@ -284,7 +369,7 @@ async def main():
 
     await client.start()
 
-    logging.info("🚀 V85 - Hidden Twitter Links Fixed")
+    logging.info("🚀 V86 - Hidden Links + Old Reply Mapping Fixed")
 
     await client.run_until_disconnected()
 
