@@ -1,7 +1,6 @@
 import os, logging, asyncio, re, sqlite3, time
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -24,353 +23,140 @@ recent_processed = {}
 # --- DB FUNCTIONS ---
 def init_db():
     conn = sqlite3.connect(DB_FILE)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS mapping (
-            src_id INTEGER PRIMARY KEY,
-            tgt_id INTEGER,
-            last_text TEXT
-        )
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS blocked_msgs (
-            src_id INTEGER PRIMARY KEY
-        )
-    """)
-
-    # Faster old reply lookups
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_mapping_src_id
-        ON mapping(src_id)
-    """)
-
+    conn.execute("CREATE TABLE IF NOT EXISTS mapping (src_id INTEGER PRIMARY KEY, tgt_id INTEGER, last_text TEXT)")
+    conn.execute("CREATE TABLE IF NOT EXISTS blocked_msgs (src_id INTEGER PRIMARY KEY)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mapping_src_id ON mapping(src_id)")
     conn.commit()
     conn.close()
 
 def save_mapping(src_id, tgt_id, text):
     conn = sqlite3.connect(DB_FILE)
-
-    conn.execute(
-        "INSERT OR REPLACE INTO mapping VALUES (?, ?, ?)",
-        (src_id, tgt_id, text)
-    )
-
+    conn.execute("INSERT OR REPLACE INTO mapping VALUES (?, ?, ?)", (src_id, tgt_id, text))
     conn.commit()
     conn.close()
 
 def save_blocked(src_id):
     conn = sqlite3.connect(DB_FILE)
-
-    conn.execute(
-        "INSERT OR REPLACE INTO blocked_msgs VALUES (?)",
-        (src_id,)
-    )
-
+    conn.execute("INSERT OR REPLACE INTO blocked_msgs VALUES (?)", (src_id,))
     conn.commit()
     conn.close()
 
 def is_parent_blocked(src_id):
-
-    if not src_id:
-        return False
-
+    if not src_id: return False
     conn = sqlite3.connect(DB_FILE)
-
-    res = conn.execute(
-        "SELECT src_id FROM blocked_msgs WHERE src_id = ?",
-        (src_id,)
-    ).fetchone()
-
+    res = conn.execute("SELECT src_id FROM blocked_msgs WHERE src_id = ?", (src_id,)).fetchone()
     conn.close()
-
     return True if res else False
 
 def get_mapping(src_id):
-
     conn = sqlite3.connect(DB_FILE)
-
-    res = conn.execute(
-        "SELECT tgt_id, last_text FROM mapping WHERE src_id = ?",
-        (src_id,)
-    ).fetchone()
-
+    res = conn.execute("SELECT tgt_id, last_text FROM mapping WHERE src_id = ?", (src_id,)).fetchone()
     conn.close()
-
     return res if res else (None, None)
 
 def delete_mapping(src_id):
-
     conn = sqlite3.connect(DB_FILE)
-
-    conn.execute(
-        "DELETE FROM mapping WHERE src_id = ?",
-        (src_id,)
-    )
-
-    conn.execute(
-        "DELETE FROM blocked_msgs WHERE src_id = ?",
-        (src_id,)
-    )
-
+    conn.execute("DELETE FROM mapping WHERE src_id = ?", (src_id,))
+    conn.execute("DELETE FROM blocked_msgs WHERE src_id = ?", (src_id,))
     conn.commit()
     conn.close()
 
 init_db()
-
-client = TelegramClient(
-    StringSession(SESSION),
-    API_ID,
-    API_HASH
-)
-
-# --- REMOVE ONLY BLOCKED HIDDEN LINKS ---
-def remove_hidden_links(msg):
-
-    text = msg.text or ""
-
-    if not msg.entities:
-        return text
-
-    blocked_domains = [
-        "twitter.com",
-        "x.com",
-        "t.co",
-        "youtube.com",
-        "youtu.be",
-        "wa.me",
-        "telegram.me",
-        "t.me",
-        "bit.ly",
-        "tinyurl",
-        "openinapp"
-    ]
-
-    cleaned_text = text
-
-    for entity in msg.entities:
-
-        # Hidden clickable links
-        if isinstance(entity, MessageEntityTextUrl):
-
-            url = (entity.url or "").lower()
-
-            # Ignore hidden blocked links
-            if any(domain in url for domain in blocked_domains):
-                continue
-
-    return cleaned_text
+client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
 # --- SMART CLEANING ---
 def clean_text(text):
-
-    if not text:
-        return ""
-
+    if not text: return ""
     lines = text.split('\n')
-
-    unwanted = [
-        "hare krishna",
-        "finance with sunil",
-        "stock gainers",
-        "sebi registered",
-        "prime membership"
-    ]
-
-    cleaned = [
-        l for l in lines
-        if not any(p in l.lower() for p in unwanted)
-    ]
-
+    unwanted = ["hare krishna", "finance with sunil", "stock gainers", "sebi registered", "prime membership"]
+    cleaned = [l for l in lines if not any(p in l.lower() for p in unwanted)]
     text = re.sub(r'@\S+', '', '\n'.join(cleaned))
-
     return text.strip() + "\u2063" if text.strip() else ""
 
-# --- BLOCKING SYSTEM ---
+# --- UPDATED BLOCKING ---
 def is_blocked(msg):
-
-    # Replies to blocked messages
-    if msg.reply_to_msg_id and is_parent_blocked(msg.reply_to_msg_id):
-        return True
-
+    if msg.reply_to_msg_id and is_parent_blocked(msg.reply_to_msg_id): return True
+    
     text = (msg.text or "").lower()
-
+    # Sirf unhi visible links ko rokega jo ads hain
     promo_patterns = r'(twitter\.com|x\.com|t\.co|youtube\.com|youtu\.be|openinapp\.co|tinyurl\.com|bit\.ly|wa\.me|\+91)'
-
-    if re.search(promo_patterns, text):
-        return True
-
-    promo_kws = [
-        "advisory",
-        "limited seats",
-        "kapil verma",
-        "sg cash",
-        "discount offer"
-    ]
-
-    if any(kw in text for kw in promo_kws):
-        return True
-
-    # Forward source filtering
+    if re.search(promo_patterns, text): return True
+    
+    promo_kws = ["advisory", "limited seats", "kapil verma", "sg cash", "discount offer"]
+    if any(kw in text for kw in promo_kws): return True
+    
     if msg.forward and msg.forward.chat:
-
         fwd_title = (msg.forward.chat.title or "").lower()
-
-        if any(x in fwd_title for x in ["sg cash", "sebi", "kapil"]):
-            return True
-
+        if any(x in fwd_title for x in ["sg cash", "sebi", "kapil"]): return True
     return False
 
-# --- MAIN MIRROR ENGINE ---
+# --- MIRROR ENGINE ---
 async def process_msg(msg, is_edit=False):
-
     try:
-
-        if msg.chat_id not in SOURCE_CHATS:
-            return
-
+        if msg.chat_id not in SOURCE_CHATS: return
+        
+        # Check database FIRST to stop double mirroring
         tgt_id, last_text = get_mapping(msg.id)
 
-        # Duplicate protection
+        # Duplicate cache check
         if not is_edit and not tgt_id:
-
             msg_key = f"{msg.chat_id}_{msg.id}"
-
-            if (
-                msg_key in recent_processed and
-                (time.time() - recent_processed[msg_key]) < 5
-            ):
+            if msg_key in recent_processed and (time.time() - recent_processed[msg_key]) < 8:
                 return
-
             recent_processed[msg_key] = time.time()
 
-        # Hard block checks
         if is_blocked(msg):
             save_blocked(msg.id)
             return
 
-        # Remove hidden blocked links only
-        raw_text = remove_hidden_links(msg)
-
-        # Existing cleaning
-        text = clean_text(raw_text)
-
-        # --- REPLY MAPPING FIX ---
+        text = clean_text(msg.text)
         reply_to = None
-
         if msg.reply_to_msg_id:
+            reply_to, _ = get_mapping(msg.reply_to_msg_id)
 
-            try:
-
-                mapped_reply, _ = get_mapping(msg.reply_to_msg_id)
-
-                # Old mirrored message found
-                if mapped_reply:
-                    reply_to = mapped_reply
-
-                # Mapping missing
-                else:
-                    logging.warning(
-                        f"⚠️ Old reply mapping not found for source msg: {msg.reply_to_msg_id}"
-                    )
-
-            except Exception as e:
-                logging.error(f"Reply Mapping Error: {e}")
-
-        # --- NEW MESSAGE ---
+        # AGAR NAYA MESSAGE HAI
         if not tgt_id:
-
-            if not text and not msg.media:
-                return
-
-            # MEDIA MESSAGE
+            if not text and not msg.media: return
             if msg.media:
-
                 path = await client.download_media(msg)
-
-                sent = await client.send_file(
-                    TARGET,
-                    path,
-                    caption=text,
-                    reply_to=reply_to,
-                    parse_mode=None
-                )
-
-                if os.path.exists(path):
-                    os.remove(path)
-
-            # TEXT MESSAGE
+                sent = await client.send_file(TARGET, path, caption=text, reply_to=reply_to)
+                if os.path.exists(path): os.remove(path)
             else:
-
-                sent = await client.send_message(
-                    TARGET,
-                    text,
-                    link_preview=False,
-                    reply_to=reply_to,
-                    parse_mode=None
-                )
-
+                sent = await client.send_message(TARGET, text, link_preview=False, reply_to=reply_to)
+            
             if sent:
                 save_mapping(msg.id, sent.id, text)
-
-        # --- EDIT EXISTING ---
+        
+        # AGAR EDIT HAI (Aur text sach mein badla hai)
         elif last_text != text:
-
             try:
-
-                await client.edit_message(
-                    TARGET,
-                    tgt_id,
-                    text,
-                    link_preview=False,
-                    parse_mode=None
-                )
-
+                await client.edit_message(TARGET, tgt_id, text, link_preview=False)
                 save_mapping(msg.id, tgt_id, text)
-
             except Exception as e:
                 logging.error(f"Edit Failed: {e}")
 
     except Exception as e:
         logging.error(f"Error: {e}")
 
-# --- HANDLERS ---
 @client.on(events.NewMessage(chats=SOURCE_CHATS))
-async def h1(event):
-    await process_msg(event.message, is_edit=False)
+async def h1(event): await process_msg(event.message, is_edit=False)
 
 @client.on(events.MessageEdited(chats=SOURCE_CHATS))
-async def h2(event):
-    await process_msg(event.message, is_edit=True)
+async def h2(event): await process_msg(event.message, is_edit=True)
 
 @client.on(events.MessageDeleted())
 async def delete_handler(event):
-
     for msg_id in event.deleted_ids:
-
         tgt_id, _ = get_mapping(msg_id)
-
         if tgt_id:
-
             try:
-
-                await client.delete_messages(
-                    TARGET,
-                    tgt_id
-                )
-
+                await client.delete_messages(TARGET, tgt_id)
                 delete_mapping(msg_id)
+            except: pass
 
-            except:
-                pass
-
-# --- MAIN ---
 async def main():
-
     await client.start()
-
-    logging.info("🚀 V86 - Hidden Links + Old Reply Mapping Fixed")
-
+    logging.info("🚀 V87 - STABLE MIRROR ONLINE")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
